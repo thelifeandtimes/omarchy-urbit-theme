@@ -1,0 +1,21 @@
+name: test
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Backend and installation fixtures
+        run: python3 -B -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py'
+      - name: Panel protocol and queue tests
+        run: node --test tests/model.test.js
+      - name: Hook syntax
+        run: bash -n hooks/omarchy-urbit-theme

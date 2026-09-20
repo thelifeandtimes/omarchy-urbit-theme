@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "thelifeandtimes.urbit-theme",
+  "name": "Urbit Theme",
+  "version": "0.1.1",
+  "author": "Stuart Christoph",
+  "license": "MIT",
+  "description": "Publish the current Omarchy palette to your Urbit ship with explicit consent.",
+  "kinds": ["service", "bar-widget"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Urbit Theme",
+    "description": "Connect a ship, preview the palette, and control theme publishing.",
+    "category": "Appearance",
+    "aliases": ["urbit", "ship-theme"],
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
