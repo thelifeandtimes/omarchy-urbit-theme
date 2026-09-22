@@ -15,7 +15,7 @@ ShellRoot {
     var q = Model.copy(service.queue)
     q.running = action
     service.queue = q
-    service.lastError = ""
+    service.operationErrors = ({})
     service.launch(action, {})
   }
   function fail() { console.error("SERVICE_SMOKE_FAILED_PHASE_" + phase); Qt.quit() }
@@ -44,7 +44,7 @@ ShellRoot {
         q.running = "fixture-failstart"
         service.queue = q
         service.processGeneration++
-        service.lastError = ""
+        service.operationErrors = ({})
         helper.command = ["/nonexistent-urbit-theme-fixture-command"]
         helper.running = true
       } else if (phase === 3) {
@@ -58,7 +58,7 @@ ShellRoot {
         if (service.lastError !== Model.errorText("helper_timeout")) { fail(); return }
         resource("helperWatchdog").interval = 120000
         phase = 5
-        service.lastError = ""
+        service.operationErrors = ({})
         service.refresh()
       } else {
         if (service.lastError) { fail(); return }

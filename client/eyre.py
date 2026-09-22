@@ -41,11 +41,13 @@ class Eyre:
         try:
             conn.request(method, path, body=body, headers=headers)
             response = conn.getresponse()
-            if 300 <= response.status < 400:
+            logout = method == "POST" and path == "/~/logout" and body == b""
+            logout_ok = logout and response.status in (303, 401)
+            if 300 <= response.status < 400 and not logout_ok:
                 raise Failure("redirect", "The ship redirected the request. Use its final origin; redirects are never followed.")
-            if response.status in (401, 403) or (path == "/~/login" and response.status == 400):
+            if not logout_ok and (response.status in (401, 403) or (path == "/~/login" and response.status == 400)):
                 raise Failure("authentication", "Authentication was rejected. Disconnect and sign in again.")
-            if not 200 <= response.status < 300:
+            if not logout_ok and not 200 <= response.status < 300:
                 raise Failure("http", "The ship could not complete the request.", response.status >= 500 or response.status == 429)
             yield response
         except ssl.SSLError:
@@ -104,6 +106,11 @@ class Eyre:
     def scry(self):
         with self.request("GET", "/~/scry/settings/desk/talon.json") as response:
             return loads(self.read(response))
+
+    def logout(self):
+        # No all/sid/host or redirect parameters: revoke only our request session.
+        with self.request("POST", "/~/logout", b"", "application/x-www-form-urlencoded"):
+            pass
 
     def put(self, path, messages):
         body = dumps(messages).encode()

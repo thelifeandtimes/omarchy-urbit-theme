@@ -9,22 +9,37 @@ Item {
   property var settings: ({})
   property var account: Model.emptyState()
   property var currentPalette: null
-  property string lastError: ""
+  property var operationErrors: ({})
+  property string cleanupWarning: ""
+  readonly property string lastError: Object.keys(operationErrors).map(function(key) {
+    return root.operationErrors[key]
+  }).concat(cleanupWarning ? ["Cleanup warning: " + cleanupWarning] : []).join(" ")
   property bool loaded: false
   property var queue: Model.initialQueue()
   property string pendingInput: ""
   property string output: ""
   property string transportError: ""
   property int processGeneration: 0
-  signal consentInvalidated()
-  readonly property bool busy: queue.running !== "" || queue.control !== ""
-  readonly property bool canLogin: loaded && !account.connected && Model.idle(queue)
-  readonly property bool stopping: queue.control === "pause" || queue.control === "disconnect"
-    || queue.running === "pause" || queue.running === "disconnect"
-  readonly property bool retrying: queue.retryDelay > 0
-  readonly property string statusText: !loaded ? "Loading ship status" : stopping ? "Waiting to stop publishing"
-    : busy ? "Working: " + queue.running : account.authenticationRequired ? "Sign-in required"
-    : !account.connected ? "No ship connected" : account.automatic && !queue.suspended ? "Automatic publishing enabled" : "Automatic publishing paused"
+  property var rowErrors: ({})
+  readonly property bool busy: queue.running !== "" || queue.controls.length > 0
+  readonly property bool canLogin: loaded && account.ships.length < 64
+    && queue.running === "" && queue.controls.length === 0 && !helper.running
+  readonly property string statusText: !loaded ? "Loading ships" : busy ? "Working: " + queue.running
+    : account.ships.length + " ships"
+
+  function rowBusy(row) {
+    return Model.controlled(queue, row) || (!!queue.run && queue.running !== "sync"
+      && Model.sameAccount(queue.run.expectedAccount, row))
+  }
+
+  function rowStatus(row) {
+    if (row.authenticationRequired) return "Session expired. Remove this ship, then add it again."
+    if (rowBusy(row)) return "Waiting to " + (Model.controlled(queue, row) ? "apply change" : "finish change")
+    if (queue.running === "sync" && Model.sameAccount(queue.run.expectedAccount, row)) return "Syncing..."
+    var jobs = queue.jobs.filter(function(j) { return Model.sameAccount(j.expectedAccount, row) })
+    if (jobs.length) return jobs[0].attempts ? "Sync pending. Automatic retry scheduled." : "Sync pending."
+    return rowErrors[row.id] || row.lastError || (row.pending ? "Sync pending. Pause then resume to retry." : "")
+  }
 
   function refresh() {
     queue = Model.request(queue, "refresh", account)
@@ -33,14 +48,14 @@ Item {
 
   function themeChanged() {
     queue = Model.request(queue, "theme", account)
-    if (!queue.retryDelay) retry.stop()
+    retry.stop()
     debounce.restart()
   }
 
-  function control(action) {
-    if (["publish", "enable", "pause", "disconnect"].indexOf(action) < 0 || !loaded) return
-    queue = Model.request(queue, action, account)
-    if (!queue.retryDelay) retry.stop()
+  function control(action, row) {
+    if (["enable", "pause", "disconnect"].indexOf(action) < 0 || !loaded || !row) return
+    if (action === "enable" && row.authenticationRequired) return
+    queue = Model.request(queue, action, account, row)
     pump()
   }
 
@@ -49,7 +64,8 @@ Item {
     if (!canLogin || !Model.safeUrl(url) || !url || !code || code.length > 512) return false
     var q = Model.copy(queue)
     q.running = "login"
-    q.runGeneration = q.generation
+    q.run = { action: "login" }
+    q.loginIds = account.ships.map(function(row) { return row.id })
     queue = q
     launch("login", { url: url, code: code })
     return true
@@ -57,13 +73,18 @@ Item {
 
   function pump() {
     if (queue.running || helper.running) return
-    queue = Model.next(queue, account)
+    retry.stop()
+    queue = Model.next(queue, account, Date.now())
     var action = queue.running
-    if (!action) return
+    if (!action) {
+      var delay = Model.retryDelay(queue, Date.now())
+      if (delay) { retry.interval = delay; retry.start() }
+      return
+    }
     var command = action, input = ({})
-    if (action === "publish" || action === "sync") { command = "sync"; input = { force: action === "publish" } }
+    if (action === "sync") input = { force: false, palette: queue.run.palette }
     if (action === "enable" || action === "pause") { command = "set-auto"; input = { enabled: action === "enable" } }
-    if (queue.runAccount) input.expectedAccount = queue.runAccount
+    if (queue.run.expectedAccount) input.expectedAccount = queue.run.expectedAccount
     launch(command, input)
   }
 
@@ -99,19 +120,31 @@ Item {
     pendingInput = ""
     helper.stdinEnabled = false
     var action = queue.running
-    if (response.error && response.error.code === "account-changed") consentInvalidated()
     if (response.state) {
       account = response.state
       loaded = true
     }
-    if (response.palette || (action === "preview" && response.state)) currentPalette = response.palette
-    lastError = Model.meaningfulError(lastError, action, response)
-    queue = Model.complete(queue, response, account)
-    if (!queue.retryDelay) retry.stop()
-    if (queue.retryDelay && !retry.running) {
-      retry.interval = queue.retryDelay
-      retry.start()
+    if (action === "preview" && queue.run.generation === queue.generation && response.ok)
+      currentPalette = response.palette
+    var expected = queue.run ? queue.run.expectedAccount : null
+    var errors = ({})
+    account.ships.forEach(function(row) {
+      if (root.rowErrors[row.id] && (!response.state || row.lastError)) errors[row.id] = root.rowErrors[row.id]
+    })
+    if (expected && Model.account(account, expected)) {
+      if (response.ok) delete errors[expected.id]
+      else errors[expected.id] = response.error.message
     }
+    rowErrors = errors
+    var operational = Object.assign({}, operationErrors)
+    if (response.state) delete operational.status
+    if (action !== "preview" || queue.run.generation === queue.generation) {
+      if (response.ok) delete operational[action]
+      else if (!expected || !Model.account(account, expected)) operational[action] = response.error.message
+    }
+    operationErrors = operational
+    if (response.warning) cleanupWarning = response.warning.message
+    queue = Model.complete(queue, response, account, Date.now())
     output = ""
     Qt.callLater(pump)
   }
@@ -136,12 +169,7 @@ Item {
   }
   Timer {
     id: retry
-    onTriggered: {
-      var q = Model.copy(root.queue)
-      q.retryDelay = 0
-      root.queue = q
-      root.pump()
-    }
+    onTriggered: root.pump()
   }
   Timer {
     id: watchdog

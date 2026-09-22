@@ -74,7 +74,7 @@ def run(args):
     subprocess.run(args, check=True, timeout=15)
 
 
-def install(source, home, replace=False, enable=False, runner=run):
+def install(source, home, replace=False, enable=False, runner=run, restart_shell=False):
     target, hook = paths(home)
     payload = {name: regular(source / name) for name in FILES}
     hook_data = regular(source / "hooks" / HOOK)
@@ -123,6 +123,8 @@ def install(source, home, replace=False, enable=False, runner=run):
     if enable:
         runner(["omarchy-shell", "shell", "rescanPlugins"])
         runner(["omarchy", "plugin", "enable", ID, "--section", "right"])
+        if restart_shell:
+            runner(["omarchy", "restart", "shell"])
     else:
         print(f"Enable explicitly: omarchy-shell shell rescanPlugins; omarchy plugin enable {ID}")
 
@@ -130,7 +132,7 @@ def install(source, home, replace=False, enable=False, runner=run):
 def uninstall(home, runner=run):
     target, hook = paths(home)
     inspect(target, hook)
-    # Disabling stops new service work. Pause in the panel first so any in-flight
+    # Disabling stops new service work. Pause all ships first so any in-flight
     # publication finishes and automatic consent does not survive a reinstall.
     runner(["omarchy", "plugin", "disable", ID])
     if hook.exists():
@@ -138,7 +140,7 @@ def uninstall(home, runner=run):
     shutil.rmtree(target)
     runner(["omarchy-shell", "shell", "rescanPlugins"])
     print("Removed this plugin and hook. Ship settings and local session/state were retained.")
-    print("Use Disconnect before uninstalling if you also want to forget the keyring session.")
+    print("Remove ships with X before uninstalling if you also want to forget their keyring sessions.")
 
 
 def main():
@@ -146,12 +148,15 @@ def main():
     parser.add_argument("action", choices=("install", "uninstall"))
     parser.add_argument("--replace", action="store_true", help="replace an unmodified installer-owned snapshot")
     parser.add_argument("--enable", action="store_true", help="rescan and enable the bar widget after installation")
+    parser.add_argument("--restart-shell", action="store_true", help="restart the shell after enabling to clear stale QML code")
     args = parser.parse_args()
-    if args.action == "uninstall" and (args.replace or args.enable):
+    if args.action == "uninstall" and (args.replace or args.enable or args.restart_shell):
         parser.error("installation flags cannot be used for uninstall")
+    if args.restart_shell and not args.enable:
+        parser.error("--restart-shell requires --enable")
     try:
         if args.action == "install":
-            install(SOURCE, Path.home(), args.replace, args.enable)
+            install(SOURCE, Path.home(), args.replace, args.enable, restart_shell=args.restart_shell)
         else:
             uninstall(Path.home())
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:

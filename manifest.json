@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "thelifeandtimes.urbit-theme",
   "name": "Urbit Theme",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "author": "Stuart Christoph",
   "license": "MIT",
-  "description": "Publish the current Omarchy palette to your Urbit ship with explicit consent.",
+  "description": "Sync the current Omarchy palette to multiple Urbit ships with independent pause and removal controls.",
   "kinds": ["service", "bar-widget"],
   "keepLoaded": true,
   "entryPoints": {
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Urbit Theme",
-    "description": "Connect a ship, preview the palette, and control theme publishing.",
+    "description": "Preview the palette, add ships, and pause, resume, or remove each connection.",
     "category": "Appearance",
     "aliases": ["urbit", "ship-theme"],
     "allowMultiple": false,

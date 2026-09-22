@@ -53,6 +53,10 @@ class InstallTest(unittest.TestCase):
             ["omarchy", "plugin", "enable", installer.ID, "--section", "right"],
         ])
 
+    def test_shell_restart_is_explicit(self):
+        self.install(enable=True, restart_shell=True)
+        self.assertEqual(self.calls[-1], ["omarchy", "restart", "shell"])
+
     def test_unrelated_hook_and_shell_config_survive(self):
         self.hook.parent.mkdir(parents=True)
         other = self.hook.parent / "another-plugin"

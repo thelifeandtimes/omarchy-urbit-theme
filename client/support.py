@@ -163,7 +163,7 @@ def resolve_palette(home=None, runner=command):
         if len(raw_name) > 1025:
             raise ValueError()
         name = raw_name.decode("utf-8").strip()
-        if not name or len(name) > 256 or any(ord(c) < 32 for c in name):
+        if not name or len(name) > 256 or any(ord(c) < 32 or ord(c) == 127 for c in name):
             raise ValueError()
     except (OSError, UnicodeError, ValueError):
         raise Failure("palette", "The current Omarchy theme is unavailable or invalid.", True) from None
@@ -185,17 +185,94 @@ def fingerprint(palette):
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def validate_palette(value):
+    keys = {"id", "name", "dark", "primary", "secondary", "tertiary", "background", "surface"}
+    if (not isinstance(value, dict) or set(value) != keys or value["id"] != PLUGIN_ID
+            or type(value["dark"]) is not bool or not isinstance(value["name"], str)
+            or not value["name"].strip() or len(value["name"]) > 256
+            or any(ord(c) < 32 or ord(c) == 127 for c in value["name"])):
+        raise Failure("palette", "The supplied palette is invalid.")
+    result = dict(value)
+    for key in ("primary", "secondary", "tertiary", "background", "surface"):
+        result[key] = hex_color(value[key])
+    return result
+
+
 def empty_state():
-    return dict(connected=False, ship="", url="", automatic=False, pending=False,
+    return {"ships": []}
+
+
+def empty_ship():
+    return dict(id="", ship="", url="", automatic=False, pending=False,
                 authenticationRequired=False, lastPublished="", lastTheme="", lastError="")
 
 
 def empty_record():
-    return dict(version=1, state=empty_state(), fingerprint="", account="")
+    return dict(version=2, ships=[])
 
 
 def account(url, ship):
     return hashlib.sha256((url + "\n" + ship).encode()).hexdigest()
+
+
+def validate_record(record):
+    if not isinstance(record, dict) or type(record.get("version")) is not int:
+        raise malformed()
+    migrating = record["version"] == 1
+    if migrating:
+        legacy = dict(connected=False, **{k: v for k, v in empty_ship().items() if k != "id"})
+        if (set(record) != {"version", "state", "fingerprint", "account"}
+                or not isinstance(record["state"], dict) or set(record["state"]) != set(legacy)
+                or any(type(record["state"][k]) is not type(v) for k, v in legacy.items())):
+            raise malformed()
+        state = record["state"]
+        for key in ("fingerprint", "account"):
+            if not isinstance(record[key], str) or (record[key] and not re.fullmatch("[0-9a-f]{64}", record[key])):
+                raise malformed()
+        if state["connected"]:
+            if record["account"] != account(state["url"], state["ship"]):
+                raise malformed()
+            row = {k: v for k, v in state.items() if k != "connected"}
+            record = dict(version=2, ships=[dict(row, id=record["account"], fingerprint=record["fingerprint"])])
+        else:
+            if (state["url"] or state["ship"] or state["automatic"] or state["pending"]
+                    or record["account"] or record["fingerprint"]):
+                raise malformed()
+            return empty_record()
+    if (record["version"] != 2 or set(record) != {"version", "ships"}
+            or not isinstance(record["ships"], list) or len(record["ships"]) > 64):
+        raise malformed()
+    template = dict(empty_ship(), fingerprint="")
+    ids, urls = set(), set()
+    for row in record["ships"]:
+        if (not isinstance(row, dict) or set(row) != set(template)
+                or any(type(row[k]) is not type(v) for k, v in template.items())):
+            raise malformed()
+        if (not re.fullmatch("[0-9a-f]{64}", row["id"])
+                or row["fingerprint"] and not re.fullmatch("[0-9a-f]{64}", row["fingerprint"])
+                or len(row["ship"]) > 128 or not re.fullmatch(r"~[a-z]+(?:-+[a-z]+)*", row["ship"])
+                or row["id"] in ids or row["url"] in urls):
+            raise malformed()
+        try:
+            if origin(row["url"]) != row["url"]:
+                raise malformed()
+        except Failure:
+            raise malformed() from None
+        for key, limit in (("lastPublished", 40), ("lastTheme", 256), ("lastError", 512)):
+            if len(row[key]) > limit or any(ord(c) < 32 or ord(c) == 127 for c in row[key]):
+                if not migrating:
+                    raise malformed()
+                # V1 allowed incompatible display text; it must not trap an account.
+                row[key] = "" if key == "lastPublished" else "".join(
+                    c for c in row[key] if ord(c) >= 32 and ord(c) != 127)[:limit]
+        if row["lastPublished"] and not re.fullmatch(
+                r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)", row["lastPublished"]):
+            if not migrating:
+                raise malformed()
+            row["lastPublished"] = ""
+        ids.add(row["id"])
+        urls.add(row["url"])
+    return record
 
 
 class StateStore:
@@ -241,26 +318,7 @@ class StateStore:
             raw = stream.read(LIMIT + 1)
         if len(raw) > LIMIT:
             raise malformed()
-        record = loads(raw)
-        if not isinstance(record, dict) or set(record) != {"version", "state", "fingerprint", "account"}:
-            raise malformed()
-        state = record["state"]
-        if record["version"] != 1 or not isinstance(state, dict) or set(state) != set(empty_state()):
-            raise malformed()
-        if any(type(state[k]) is not type(v) for k, v in empty_state().items()):
-            raise malformed()
-        for key in ("fingerprint", "account"):
-            if not isinstance(record[key], str) or (record[key] and not re.fullmatch("[0-9a-f]{64}", record[key])):
-                raise malformed()
-        if state["connected"]:
-            if origin(state["url"]) != state["url"] or not re.fullmatch(r"~[a-z]+(?:-+[a-z]+)*", state["ship"]):
-                raise malformed()
-            if record["account"] != account(state["url"], state["ship"]):
-                raise malformed()
-        elif (state["url"] or state["ship"] or state["automatic"] or state["pending"]
-              or record["account"] or record["fingerprint"]):
-            raise malformed()
-        return record
+        return validate_record(loads(raw))
 
     def save(self, record):
         path = None

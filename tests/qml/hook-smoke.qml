@@ -50,7 +50,7 @@ ShellRoot {
         unexpectedActions: root.unexpectedActions,
         previewsDuringDebounce: root.previewsDuringDebounce,
         previewDelay: root.previewDelay,
-        disconnected: !!service && !service.account.connected && !service.account.automatic,
+        disconnected: !!service && service.account.ships.length === 0,
         clean: !!service && !service.lastError && service.pendingInput === ""
       })
     }

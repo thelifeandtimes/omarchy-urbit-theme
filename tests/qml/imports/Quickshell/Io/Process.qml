@@ -12,6 +12,8 @@ QtObject {
   property int launches: 0
   property bool stoppedBeforeExit: false
   property var expectedAccount: null
+  property var palette: null
+  property bool force: false
   signal started()
   signal exited(int exitCode, int exitStatus)
   onRunningChanged: if (running) {
@@ -22,6 +24,8 @@ QtObject {
   function write(data) {
     handedOff = data.length > 0
     expectedAccount = data ? JSON.parse(data).expectedAccount || null : null
+    palette = data ? JSON.parse(data).palette || null : null
+    force = data ? JSON.parse(data).force || false : false
   }
   function signal(number) { respond("", 1) }
   function respond(data, code) {

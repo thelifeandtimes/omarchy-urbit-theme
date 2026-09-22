@@ -9,37 +9,41 @@ Ui.Panel {
   id: root
   moduleName: "thelifeandtimes.urbit-theme"
   ipcTarget: "thelifeandtimes.urbit-theme"
-
-  // The shell injects this after creation; an absent service must be inert.
   property var service: bar && bar.shell && typeof bar.shell.serviceFor === "function"
     ? bar.shell.serviceFor(moduleName) : null
   readonly property var account: service ? service.account : Model.emptyState()
   readonly property var currentPalette: service ? service.currentPalette : null
   readonly property bool ready: !!service && service.loaded
-  readonly property bool busy: !!service && service.busy
   readonly property color foreground: Color.foreground
-  readonly property string statusText: service ? service.statusText : "Urbit Theme service is loading"
+  property bool adding: false
   property string formError: ""
-  property bool consent: false
-  readonly property string accountIdentity: JSON.stringify(Model.identity(account))
-
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
   function clearSecret() {
-    // Assignment, not clear()/remove(): Qt also resets the undo history.
+    // Assignment also resets Qt's undo history.
     if (codeField) codeField.text = ""
+  }
+  function cancelLogin() {
+    clearSecret()
+    adding = false
+    urlField.text = ""
+    formError = ""
   }
   function submitLogin() {
     formError = ""
     try {
-      if (!service || !service.canLogin) return
-      if (!Model.safeUrl(urlField.text.trim()) || !urlField.text.trim()) {
+      if (!service || !service.canLogin) {
+        formError = "Wait for syncing to finish, then enter your +code. Credentials are never queued."
+        return
+      }
+      if (!Model.safeUrl(urlField.text.trim())) {
         formError = "Enter a ship URL, for example https://ship.example."
         return
       }
       if (!codeField.text) { formError = "Enter the ship's +code."; return }
-      if (!service.login(urlField.text.trim(), codeField.text)) formError = "Sign-in is unavailable. Wait for the current operation."
+      if (service.login(urlField.text.trim(), codeField.text)) cancelLogin()
+      else formError = "Sign-in is unavailable. Wait for the current operation."
     } finally { clearSecret() }
   }
   function reveal(item) {
@@ -49,22 +53,14 @@ Ui.Panel {
     else if (p.y + item.height > flick.contentY + flick.height)
       flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height, p.y + item.height - flick.height))
   }
-
-  onOpenedChanged: {
-    clearSecret()
-    formError = ""
-    consent = false
-    if (opened && service) service.refresh()
-  }
-  onServiceChanged: { clearSecret(); consent = false }
-  onAccountIdentityChanged: { clearSecret(); consent = false; formError = "" }
-  onVisibleChanged: if (!visible) { clearSecret(); consent = false }
+  onOpenedChanged: { cancelLogin(); if (opened && service) service.refresh() }
+  onServiceChanged: cancelLogin()
+  onVisibleChanged: if (!visible) cancelLogin()
+  onAddingChanged: if (!adding) clearSecret()
   Component.onDestruction: clearSecret()
-
   Connections {
     target: root.service
-    ignoreUnknownSignals: true
-    function onConsentInvalidated() { root.clearSecret(); root.consent = false }
+    function onCanLoginChanged() { if (!root.service.canLogin) root.clearSecret() }
   }
 
   Ui.BarIconButton {
@@ -72,17 +68,15 @@ Ui.Panel {
     anchors.fill: parent
     bar: root.bar
     text: "~"
-    active: root.opened || (root.account.automatic && !root.account.authenticationRequired)
-    tooltipText: "Urbit Theme: " + root.statusText
+    active: root.opened || root.account.ships.some(function(row) { return Model.canAuto(row) })
+    tooltipText: "Urbit Theme: " + (root.service ? root.service.statusText : "Loading")
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton || buttonCode === Qt.MiddleButton) {
         if (root.service) root.service.refresh()
       } else root.toggle()
     }
   }
-
   Ui.KeyboardPanel {
-    id: panel
     owner: root
     anchorItem: button
     bar: root.bar
@@ -90,13 +84,10 @@ Ui.Panel {
     focusTarget: form
     contentWidth: fittedContentWidth(Style.space(440))
     contentHeight: fittedContentHeight(content.implicitHeight, Style.space(720))
-
     FocusScope {
       id: form
       anchors.fill: parent
-      // Do not use PanelKeyCatcher: Tab must traverse inputs, not switch panels.
       Keys.onEscapePressed: root.close()
-
       Flickable {
         id: flick
         anchors.fill: parent
@@ -106,88 +97,15 @@ Ui.Panel {
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.VerticalFlick
         Controls.ScrollBar.vertical: Controls.ScrollBar { policy: Controls.ScrollBar.AsNeeded }
-
         Column {
           id: content
           width: flick.width
           spacing: Style.space(12)
-
-          Ui.PanelHero {
-            width: parent.width
-            title: "Urbit Theme"
-            meta: root.statusText
-            detail: root.account.connected ? root.account.ship : "CONNECT YOUR SHIP"
-            foreground: root.foreground
-            fontFamily: Style.font.family
-          }
-
+          Ui.PanelSectionHeader { objectName: "paletteSection"; text: "OMARCHY PALETTE" }
           Body {
-            visible: root.account.connected
-            text: root.account.ship + "\n" + root.account.url
+            text: root.currentPalette ? root.currentPalette.name + (root.currentPalette.dark ? " / dark" : " / light")
+              : "Palette preview is unavailable."
           }
-          Body {
-            visible: text !== ""
-            color: Color.urgent
-            text: root.formError || (root.service ? root.service.lastError : "")
-          }
-          Body {
-            visible: root.account.authenticationRequired
-            text: "Your session needs renewal. Disconnect below, then sign in again."
-          }
-          Body {
-            visible: root.account.pending || (!!root.service && root.service.retrying)
-            text: root.service && root.service.retrying ? "Publication pending. A bounded automatic retry is scheduled."
-              : "Publication pending. Publish Now to try again, or Pause to cancel automatic intent."
-          }
-
-          Column {
-            visible: !root.account.connected
-            onVisibleChanged: if (!visible) root.clearSecret()
-            width: parent.width
-            spacing: Style.space(8)
-            Ui.PanelSectionHeader { text: "SHIP SIGN-IN" }
-            Body { text: "Ship URL" }
-            Ui.TextField {
-              id: urlField
-              objectName: "shipUrl"
-              width: parent.width
-              enabled: !!root.service && root.service.canLogin
-              placeholderText: "https://ship.example"
-              maximumLength: 2048
-              inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText
-              Accessible.name: "Ship URL"
-              onAccepted: codeField.forceActiveFocus()
-              onActiveFocusChanged: if (activeFocus) root.reveal(this)
-            }
-            Body { text: "+code" }
-            Ui.TextField {
-              id: codeField
-              objectName: "shipCode"
-              width: parent.width
-              enabled: !!root.service && root.service.canLogin
-              password: true
-              passwordMaskDelay: 0
-              maximumLength: 512
-              placeholderText: "Your ship's +code"
-              inputMethodHints: Qt.ImhHiddenText | Qt.ImhSensitiveData | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
-              Accessible.name: "Ship +code"
-              onAccepted: root.submitLogin()
-              onActiveFocusChanged: if (activeFocus) root.reveal(this)
-              onVisibleChanged: if (!visible) text = ""
-              Component.onDestruction: text = ""
-            }
-            Action {
-              objectName: "signIn"
-              text: "Sign In"
-              enabled: !!root.service && root.service.canLogin
-              onClicked: root.submitLogin()
-            }
-            Body { text: "Sign-in does not publish. Only the session is stored in Secret Service; your +code is not saved." }
-          }
-
-          Ui.PanelSeparator { width: parent.width }
-          Ui.PanelSectionHeader { text: "CURRENT OMARCHY PALETTE" }
-          Body { text: root.currentPalette ? root.currentPalette.name + (root.currentPalette.dark ? " / dark" : " / light") : "Palette preview is unavailable." }
           RowLayout {
             width: parent.width
             spacing: Style.space(6)
@@ -215,70 +133,154 @@ Ui.Panel {
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
                 }
-                Text {
-                  Layout.fillWidth: true
-                  text: root.currentPalette ? root.currentPalette[modelData] : ""
-                  color: root.foreground
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
-                }
               }
             }
           }
           Action {
             objectName: "refresh"
-            text: "Refresh Preview / Status"
-            enabled: !!root.service && !root.busy
+            text: "Refresh Preview"
+            enabled: !!root.service
+            tooltipText: "Refresh palette and ship status without publishing"
             onClicked: if (root.service) root.service.refresh()
           }
-
           Ui.PanelSeparator { width: parent.width }
-          Ui.PanelSectionHeader { text: "PUBLISHING CONSENT" }
+          Ui.PanelSectionHeader { objectName: "shipsSection"; text: "SHIPS" }
+          Body { visible: root.ready && !root.account.ships.length; text: "No ships added." }
+          Repeater {
+            model: root.account.ships
+            Column {
+              id: shipRow
+              required property var modelData
+              width: content.width
+              spacing: Style.space(4)
+              RowLayout {
+                width: parent.width
+                Text {
+                  objectName: "shipName-" + shipRow.modelData.id
+                  Layout.fillWidth: true
+                  text: shipRow.modelData.ship
+                  textFormat: Text.PlainText
+                  color: root.foreground
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                  property string tooltipText: shipRow.modelData.url
+                  HoverHandler { id: shipHover }
+                  Controls.ToolTip {
+                    objectName: "shipUrlTooltip-" + shipRow.modelData.id
+                    visible: shipHover.hovered
+                    text: shipRow.modelData.url
+                  }
+                  Accessible.name: text
+                }
+                Action {
+                  id: syncButton
+                  objectName: "automatic-" + shipRow.modelData.id
+                  text: Model.toggleIcon(shipRow.modelData)
+                  implicitWidth: Style.space(36)
+                  implicitHeight: Style.space(36)
+                  tooltipText: Model.toggleLabel(shipRow.modelData) + " for " + shipRow.modelData.ship
+                  Accessible.name: tooltipText
+                  enabled: root.ready && !root.service.rowBusy(shipRow.modelData) && !shipRow.modelData.authenticationRequired
+                  onClicked: root.service.control(shipRow.modelData.automatic ? "pause" : "enable", shipRow.modelData)
+                  Row {
+                    objectName: "pauseBars-" + shipRow.modelData.id
+                    anchors.centerIn: parent
+                    spacing: Style.space(4)
+                    visible: shipRow.modelData.automatic
+                    Rectangle { width: Style.space(3); height: Style.space(13); color: root.foreground }
+                    Rectangle { width: Style.space(3); height: Style.space(13); color: root.foreground }
+                  }
+                }
+                Action {
+                  objectName: "disconnect-" + shipRow.modelData.id
+                  text: "X"
+                  tooltipText: "Remove " + shipRow.modelData.ship + ": log out and forget this ship"
+                  Accessible.name: tooltipText
+                  enabled: root.ready && !root.service.rowBusy(shipRow.modelData)
+                  onClicked: root.service.control("disconnect", shipRow.modelData)
+                }
+              }
+              Body {
+                objectName: "shipStatus-" + shipRow.modelData.id
+                text: root.service ? root.service.rowStatus(shipRow.modelData) : ""
+                visible: text !== ""
+                font.pixelSize: Style.font.caption
+              }
+            }
+          }
           Body {
-            text: "Publishing changes Talon-specific settings stored on your ship and shared across your Talon devices. It is not a local-device override. Native Tlon and other ship apps do not use this namespace. Publishing also disables Talon's separate accent override."
+            visible: text !== ""
+            color: Color.urgent
+            text: root.formError || (root.service ? root.service.lastError : "")
           }
           Action {
-            objectName: "consent"
-            width: parent.width
-            text: root.consent ? "[x] Apply across my Talon devices" : "[ ] Apply across my Talon devices"
-            selected: root.consent
-            enabled: root.ready && root.account.connected && !root.busy
-            onClicked: root.consent = !root.consent
+            objectName: "addUrbit"
+            text: "+ urbit"
+            visible: !root.adding
+            enabled: root.ready && root.account.ships.length < 64
+            onClicked: { root.adding = true; urlField.forceActiveFocus() }
           }
-          Flow {
+          Column {
             width: parent.width
             spacing: Style.space(8)
-            Action {
-              objectName: "publish"
-              text: "Publish Now"
-              enabled: root.ready && root.account.connected && !root.account.authenticationRequired && !root.busy && root.consent && !!root.currentPalette
-              onClicked: if (root.service && root.consent) root.service.control("publish")
+            visible: root.adding
+            onVisibleChanged: if (!visible) root.clearSecret()
+            Body { text: "Add & Sync enables this same palette on all Talon clients for this ship and disables Talon's separate accent override." }
+            Body { text: "Ship URL" }
+            Ui.TextField {
+              id: urlField
+              objectName: "shipUrl"
+              width: parent.width
+              placeholderText: "https://ship.example"
+              maximumLength: 2048
+              inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText
+              Accessible.name: "Ship URL"
+              onAccepted: if (codeField.enabled) codeField.forceActiveFocus()
+              onActiveFocusChanged: if (activeFocus) root.reveal(this)
             }
-            Action {
-              objectName: "automatic"
-              text: root.account.automatic ? "Pause" : "Enable Auto"
-              enabled: root.ready && root.account.connected && !root.service.stopping
-                && (root.account.automatic || (!root.busy && root.consent && !root.account.authenticationRequired && !!root.currentPalette))
-              onClicked: if (root.service) root.service.control(root.account.automatic ? "pause" : "enable")
+            Body { text: "+code" }
+            Ui.TextField {
+              id: codeField
+              objectName: "shipCode"
+              width: parent.width
+              enabled: !!root.service && root.service.canLogin
+              password: true
+              passwordMaskDelay: 0
+              maximumLength: 512
+              placeholderText: "Your ship's +code"
+              inputMethodHints: Qt.ImhHiddenText | Qt.ImhSensitiveData | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
+              Accessible.name: "Ship +code"
+              onAccepted: root.submitLogin()
+              onActiveFocusChanged: if (activeFocus) root.reveal(this)
+              onVisibleChanged: if (!visible) text = ""
+              Component.onDestruction: text = ""
             }
-            Action {
-              objectName: "disconnect"
-              text: "Disconnect"
-              enabled: root.ready && root.account.connected && !root.service.stopping
-              onClicked: if (root.service) { root.consent = false; root.service.control("disconnect") }
+            Body {
+              text: root.service && root.service.canLogin ? "Your +code is not saved. The session is stored in Secret Service."
+                : "Wait for syncing to finish before entering +code. Credentials are never queued."
+            }
+            Flow {
+              width: parent.width
+              spacing: Style.space(8)
+              Action {
+                objectName: "signIn"
+                text: "Add & Sync"
+                enabled: !!root.service && root.service.canLogin
+                onClicked: root.submitLogin()
+              }
+              Action { objectName: "cancelLogin"; text: "Cancel"; onClicked: root.cancelLogin() }
             }
           }
-          Body { text: "Auto publishes this palette now and follows installed theme-change hooks. If Talon missed an update while connecting, Publish Now resends it even when the ship already has this palette. Pause cancels queued publications and retries. A running operation finishes first. Disconnect forgets the local session; it leaves published Talon settings unchanged." }
           Body {
-            visible: root.account.lastPublished !== ""
-            text: "Last confirmed on ship: " + root.account.lastPublished + "\n" + root.account.lastTheme
+            visible: root.account.ships.length > 0
+            font.pixelSize: Style.font.caption
+            text: "Pause then resume to resend the palette. Removing a ship logs out and forgets its session; published Talon settings stay unchanged. A running operation finishes first."
           }
         }
       }
     }
   }
-
   component Body: Text {
     width: parent.width
     textFormat: Text.PlainText

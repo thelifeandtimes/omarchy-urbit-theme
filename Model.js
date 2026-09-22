@@ -1,24 +1,14 @@
-// Shared by QML and the Node tests. Only protocol-approved fields enter UI state.
-var maxOutput = 32768;
+// Shared by QML and Node. Only validated protocol fields enter UI state.
+var maxOutput = 262144;
 var retryDelays = [2000, 5000, 15000];
-
-function emptyState() {
-  return { connected: false, ship: "", url: "", automatic: false, pending: false,
-    authenticationRequired: false, lastPublished: "", lastTheme: "", lastError: "" };
-}
-
-function object(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
+function emptyState() { return { ships: [] }; }
+function object(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function text(value, limit) {
   return typeof value === "string" && value.length <= limit && !/[\x00-\x1f\x7f]/.test(value);
 }
-
 function safeUrl(value) {
-  return text(value, 2048) && (value === "" || /^https?:\/\/(?:[a-zA-Z0-9.-]+|\[[a-fA-F0-9:.]+\])(?::[0-9]{1,5})?\/?$/.test(value));
+  return text(value, 2048) && /^https?:\/\/(?:[a-zA-Z0-9.-]+|\[[a-fA-F0-9:.]+\])(?::[0-9]{1,5})?\/?$/.test(value);
 }
-
 function localPath(url) {
   var match = /^file:\/\/(?:localhost)?(\/[^?#]*)$/.exec(String(url));
   if (!match) return "";
@@ -27,29 +17,27 @@ function localPath(url) {
     return /[\x00-\x1f\x7f]/.test(path) ? "" : path;
   } catch (_) { return ""; }
 }
-
-function failure(code) {
-  return { schemaVersion: 1, ok: false, state: null, palette: null,
-    error: { code: code, message: errorText(code), retryable: false } };
-}
-
 function errorText(code) {
   var messages = {
     invalid_response: "The helper returned an invalid response.",
     helper_unavailable: "The Python helper could not be started.",
     helper_timeout: "The helper exceeded its time limit. Refresh status before trying again.",
     output_limit: "The helper response exceeded the safe size limit.",
-    authentication: "Sign-in is required or was rejected. Disconnect any current account, then sign in again.",
-    network: "The ship could not be reached. Check its address and connection.",
+    authentication: "Session expired or sign-in rejected. Remove this ship, then add it again.",
+    network: "The ship could not be reached. Check its connection.",
     keyring: "Secret Service is unavailable or locked. No plaintext fallback is used.",
-    url: "Use HTTPS, or HTTP on localhost or a loopback IP, without credentials, query, or fragment.",
-    input: "The request is invalid. Check the ship URL and +code.",
-    connected: "Disconnect the current ship before signing in again.",
-    "account-changed": "The connected account changed. Review the account and grant consent again.",
+    url: "Use HTTPS, or HTTP on loopback, without credentials, query, or fragment.",
+    input: "Check the ship URL and +code.",
+    "duplicate-origin": "This ship URL is already added.",
+    "ship-limit": "The maximum of 64 ships has been reached.",
+    "logout-unconfirmed": "Remote session logout could not be confirmed.",
+    "keyring-cleanup": "Keyring cleanup could not be confirmed; a saved session may remain.",
+    cleanup: "Remote logout and keyring cleanup could not be confirmed; a saved session may remain.",
+    "account-changed": "This ship login changed. Review the current ship list.",
     palette: "The current Omarchy palette could not be read.",
     command: "A required local command failed or is unavailable.",
     state: "Private local state could not be read or saved.",
-    redirect: "The ship redirected the request. Sign in using its final origin.",
+    redirect: "The ship redirected the request. Add it using its final origin.",
     http: "The ship could not complete the request.",
     size: "The ship response exceeded the safe size limit.",
     protocol: "The ship returned an unexpected settings response.",
@@ -61,34 +49,37 @@ function errorText(code) {
     internal: "The helper could not safely complete the operation.",
     busy: "Another helper operation is running. Try again shortly."
   };
-  return Object.prototype.hasOwnProperty.call(messages, code) ? messages[code] : "The operation failed. Check the ship connection, session, and current theme.";
+  return Object.prototype.hasOwnProperty.call(messages, code) ? messages[code]
+    : "The operation could not be completed. Check the ship connection and session.";
 }
-
+function failure(code) {
+  return { schemaVersion: 2, ok: false, state: null, palette: null, warning: null,
+    error: { code: code, message: errorText(code), retryable: false } };
+}
 function parseResponse(raw, exitCode) {
   if (typeof raw !== "string" || raw.length > maxOutput) return failure("output_limit");
   try {
     var value = JSON.parse(raw);
-    if (!object(value) || value.schemaVersion !== 1 || typeof value.ok !== "boolean"
-        || (value.ok ? exitCode !== 0 : exitCode !== 1)
-        || (!object(value.state) && (value.ok || value.state !== null))) throw 0;
-    var source = value.state, state = source === null ? null : emptyState();
-    if (source !== null) {
-      ["connected", "automatic", "pending", "authenticationRequired"].forEach(function(key) {
-        if (typeof source[key] !== "boolean") throw 0;
-        state[key] = source[key];
-      });
-      if (!text(source.ship, 256) || (source.ship !== "" && !/^~[a-z-]+$/.test(source.ship))
-          || !safeUrl(source.url) || !text(source.lastTheme, 256) || !text(source.lastError, 512)
-          || !text(source.lastPublished, 40)
-          || (source.lastPublished !== "" && !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)$/.test(source.lastPublished))) throw 0;
-      if (state.connected && (!source.ship || !source.url)) throw 0;
-      if (!state.connected && (state.automatic || state.pending)) throw 0;
-      state.ship = source.ship;
-      state.url = source.url;
-      state.lastTheme = source.lastTheme;
-      state.lastPublished = source.lastPublished;
-      // Persisted errors are safe per contract, but arbitrary helper text is never displayed.
-      state.lastError = source.lastError ? "The previous publication failed. Publish Now to try again." : "";
+    if (!object(value) || value.schemaVersion !== 2 || typeof value.ok !== "boolean"
+        || (value.ok ? exitCode !== 0 : exitCode !== 1)) throw 0;
+    var state = null;
+    if (value.state !== null) {
+      if (!object(value.state) || !Array.isArray(value.state.ships) || value.state.ships.length > 64) throw 0;
+      var ids = {}, urls = {};
+      state = { ships: value.state.ships.map(function(s) {
+        if (!object(s) || !text(s.id, 64) || !/^[0-9a-f]{64}$/.test(s.id) || ids[s.id]
+            || !text(s.ship, 256) || !/^~[a-z-]+$/.test(s.ship) || !safeUrl(s.url) || urls[s.url]
+            || !text(s.lastTheme, 256) || !text(s.lastError, 512) || !text(s.lastPublished, 40)
+            || (s.lastPublished !== "" && !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)$/.test(s.lastPublished))) throw 0;
+        ids[s.id] = true; urls[s.url] = true;
+        var row = { id: s.id, ship: s.ship, url: s.url, lastTheme: s.lastTheme,
+          lastPublished: s.lastPublished, lastError: s.lastError ? "Sync failed. Pause then resume to retry." : "" };
+        ["automatic", "pending", "authenticationRequired"].forEach(function(key) {
+          if (typeof s[key] !== "boolean") throw 0;
+          row[key] = s[key];
+        });
+        return row;
+      }) };
     }
     var palette = null;
     if (value.palette !== null) {
@@ -100,165 +91,146 @@ function parseResponse(raw, exitCode) {
         palette[key] = p[key];
       });
     }
-    var error = null;
-    if (value.ok) {
-      if (value.error !== null) throw 0;
-    } else {
-      var e = value.error;
-      if (!object(e) || !text(e.code, 64) || !/^[a-z][a-z0-9_-]*$/.test(e.code)
-          || !text(e.message, 512) || typeof e.retryable !== "boolean") throw 0;
-      error = { code: e.code, message: errorText(e.code), retryable: e.retryable };
+    function notice(n) {
+      if (!object(n) || !text(n.code, 64) || !/^[a-z][a-z0-9_-]*$/.test(n.code)
+          || !text(n.message, 512) || typeof n.retryable !== "boolean") throw 0;
+      return { code: n.code, message: errorText(n.code), retryable: n.retryable };
     }
-    return { schemaVersion: 1, ok: value.ok, state: state, palette: palette, error: error };
+    var error = value.error === null ? null : notice(value.error);
+    var warning = value.warning === null ? null : notice(value.warning);
+    if (value.ok === !!error) throw 0;
+    return { schemaVersion: 2, ok: value.ok, state: state, palette: palette, error: error, warning: warning };
   } catch (_) { return failure("invalid_response"); }
 }
 
+function identity(row) { return { id: row.id, url: row.url, ship: row.ship }; }
+function sameAccount(a, b) { return !!a && !!b && a.id === b.id && a.url === b.url && a.ship === b.ship; }
+function account(state, expected) { return state.ships.filter(function(s) { return sameAccount(s, expected); })[0]; }
+function canAuto(row) { return !!row && row.automatic && !row.authenticationRequired; }
+function toggleLabel(row) { return row.automatic ? "Pause automatic syncing" : "Resume automatic syncing"; }
+function toggleIcon(row) { return row.automatic ? "" : "\u21bb"; }
 function initialQueue() {
-  // All queued mutations share one captured identity; dispatch never substitutes
-  // a newer account. runAccount remains separate while observations/controls queue.
-  return { running: "", control: "", status: true, preview: true, sync: false, force: false,
-    startup: true, suspended: false, debouncing: false, generation: 0, runGeneration: 0,
-    retryCount: 0, retryDelay: 0, retryAction: "", startupRetryCount: 0,
-    knownAccount: null, intentAccount: null, runAccount: null };
+  return { running: "", run: null, controls: [], jobs: [], targets: [], status: true, preview: true,
+    fanout: true, knownState: false, statusDue: 0, statusAttempts: 0, previewDue: 0, previewAttempts: 0,
+    debouncing: false, generation: 0, palette: null, loginIds: [] };
 }
-
-function copy(queue) { return Object.assign({}, queue); }
-function identity(state) { return state && state.connected ? { url: state.url, ship: state.ship } : null; }
-function sameAccount(a, b) { return a === null || b === null ? a === b : a.url === b.url && a.ship === b.ship; }
-function cancelMutations(queue) {
-  var q = copy(queue);
-  q.control = "";
-  q.sync = false;
-  q.force = false;
-  q.intentAccount = null;
-  q.retryDelay = 0;
-  q.retryAction = "";
-  q.retryCount = 0;
+function copy(queue) {
+  var q = Object.assign({}, queue);
+  q.controls = queue.controls.slice(); q.jobs = queue.jobs.slice(); q.targets = queue.targets.slice();
   return q;
 }
-function canAuto(state) { return state.connected && state.automatic && !state.authenticationRequired; }
-function idle(queue) {
-  return !queue.running && !queue.control && !queue.status && !queue.preview && !queue.sync && !queue.force && !queue.debouncing;
+function idle(q) { return !q.running && !q.controls.length && !q.jobs.length && !q.status && !q.preview && !q.debouncing; }
+function controlled(q, row) { return q.controls.some(function(c) { return sameAccount(c.expectedAccount, row); }); }
+function enqueue(q, row) {
+  if (!canAuto(row) || controlled(q, row)) return;
+  q.jobs = q.jobs.filter(function(j) { return !sameAccount(j.expectedAccount, row); });
+  q.jobs.push({ action: "sync", expectedAccount: identity(row), palette: q.palette,
+    generation: q.generation, attempts: 0, due: 0 });
 }
-
-function request(queue, action, state) {
+function request(queue, action, state, row) {
   var q = copy(queue);
-  if (q.intentAccount && !sameAccount(q.intentAccount, identity(state))) q = cancelMutations(q);
   if (action === "theme") {
-    q.generation++;
-    q.preview = true;
-    q.debouncing = true;
-    q.sync = canAuto(state) && !q.suspended;
-    if (q.sync) q.intentAccount = identity(state);
-    q.retryCount = 0;
-    if (q.retryAction !== "status") { q.retryDelay = 0; q.retryAction = ""; }
-  } else if ((action === "pause" || action === "disconnect") && state.connected) {
-    q.control = q.control === "disconnect" ? "disconnect" : action;
-    q.intentAccount = identity(state);
-    q.suspended = true;
-    q.sync = false;
-    q.force = false;
-    q.retryCount = 0;
-    q.retryDelay = 0;
-    q.retryAction = "";
+    q.generation++; q.preview = true; q.fanout = !q.knownState; q.debouncing = true;
+    q.previewDue = 0; q.previewAttempts = 0;
+    q.jobs = [];
+    q.targets = state.ships.filter(function(s) { return canAuto(s) && !controlled(q, s); }).map(identity);
   } else if (action === "refresh") {
-    q.status = true;
-    q.preview = true;
-  } else if (action === "publish" && !q.running && !q.control && state.connected && !state.authenticationRequired) {
-    q.force = true;
-    q.intentAccount = identity(state);
-    q.sync = false;
-    q.retryCount = 0;
-    q.retryDelay = 0;
-  } else if (action === "enable" && !q.running && !q.control && state.connected && !state.authenticationRequired) {
-    q.control = "enable";
-    q.intentAccount = identity(state);
-    q.retryCount = 0;
-    q.retryDelay = 0;
+    if (!q.status && q.running !== "status") { q.statusDue = 0; q.statusAttempts = 0; }
+    if (!q.preview && q.running !== "preview") { q.previewDue = 0; q.previewAttempts = 0; }
+    q.status = true; q.preview = true;
+  } else if (["pause", "enable", "disconnect"].indexOf(action) >= 0 && account(state, row)) {
+    var expected = identity(row);
+    q.jobs = q.jobs.filter(function(j) { return !sameAccount(j.expectedAccount, expected); });
+    q.targets = q.targets.filter(function(t) { return !sameAccount(t, expected); });
+    // Keep other ships' control order; removal supersedes a queued toggle.
+    var prior = q.controls.filter(function(c) { return sameAccount(c.expectedAccount, expected); })[0];
+    q.controls = q.controls.filter(function(c) { return !sameAccount(c.expectedAccount, expected); });
+    q.controls.push({ action: prior && prior.action === "disconnect" ? "disconnect" : action, expectedAccount: expected });
   }
   return q;
 }
-
-function next(queue, state) {
-  var q = copy(queue), action = "";
-  if (q.intentAccount && !sameAccount(q.intentAccount, identity(state))) q = cancelMutations(q);
-  if (!q.running) {
-    if (q.control) { action = q.control; q.control = ""; }
-    else if (q.status && !(q.retryAction === "status" && q.retryDelay)) { action = "status"; q.status = false; }
-    else if (q.preview && !q.debouncing) { action = "preview"; q.preview = false; }
-    else if (q.force && !q.debouncing) { action = "publish"; q.force = false; }
-    else if (q.sync && !q.debouncing && !q.retryDelay) {
-      q.sync = false;
-      if (canAuto(state) && !q.suspended) action = "sync";
+function next(queue, state, now) {
+  var q = copy(queue);
+  if (q.running) return q;
+  q.controls = q.controls.filter(function(c) { return !!account(state, c.expectedAccount); });
+  q.jobs = q.jobs.filter(function(j) { return canAuto(account(state, j.expectedAccount)); });
+  var job = null;
+  if (q.controls.length) job = q.controls.shift();
+  else if (q.status && q.statusDue <= now) { q.status = false; job = { action: "status" }; }
+  else if (q.preview && !q.debouncing && q.previewDue <= now) {
+    q.preview = false;
+    job = { action: "preview", generation: q.generation };
+  } else if (!q.debouncing) {
+    for (var i = 0; i < q.jobs.length; i++) {
+      if (q.jobs[i].due <= now) { job = q.jobs.splice(i, 1)[0]; break; }
     }
   }
-  if (action) {
-    q.running = action;
-    q.runGeneration = q.generation;
-    q.runAccount = ["sync", "publish", "enable", "pause", "disconnect"].indexOf(action) >= 0 ? q.intentAccount : null;
-  }
+  if (job) { q.run = job; q.running = job.action; }
   return q;
 }
-
-function complete(queue, response, state) {
-  var q = copy(queue), action = q.running;
-  q.running = "";
-  var accountChanged = response.error && response.error.code === "account-changed";
+function retryDelay(q, now) {
+  if (q.running) return 0;
+  var deadlines = q.debouncing ? [] : q.jobs.map(function(j) { return j.due; });
+  if (q.status) deadlines.push(q.statusDue);
+  if (q.preview && !q.debouncing) deadlines.push(q.previewDue);
+  return deadlines.length ? Math.max(1, Math.min.apply(null, deadlines) - now) : 0;
+}
+function complete(queue, response, state, now) {
+  var q = copy(queue), action = q.running, run = q.run;
+  q.running = ""; q.run = null;
+  q.controls = q.controls.filter(function(c) { return !!account(state, c.expectedAccount); });
+  q.jobs = q.jobs.filter(function(j) { return canAuto(account(state, j.expectedAccount)); });
+  q.targets = q.targets.filter(function(t) { return canAuto(account(state, t)) && !controlled(q, t); });
   if (response.state) {
-    if (!sameAccount(q.knownAccount, identity(state))) {
-      q = cancelMutations(q);
-      q.suspended = false;
+    q.knownState = true;
+    if (q.statusAttempts) { q.status = false; q.statusDue = 0; q.statusAttempts = 0; }
+    // Resolve fan-out once, not again on retries: a removed/re-added login is new intent.
+    if (q.fanout) {
+      q.targets = state.ships.filter(function(s) { return canAuto(s) && !controlled(q, s); }).map(identity);
+      q.fanout = false;
     }
-    q.knownAccount = identity(state);
   }
-  if (accountChanged) {
-    q = cancelMutations(q);
-    if (!response.state) q.status = true;
-  }
-  if (q.startup && response.state) {
-    q.startup = false;
-    q.startupRetryCount = 0;
-    if (q.retryAction === "status") { q.retryDelay = 0; q.retryAction = ""; q.status = false; }
-    if (!accountChanged && canAuto(state) && !q.suspended) {
-      q.sync = true;
-      q.intentAccount = identity(state);
-    }
-  } else if (q.startup && action === "status" && !response.ok && response.error.retryable
-      && !accountChanged && q.startupRetryCount < retryDelays.length) {
+  if (action === "status" && !q.knownState && !response.ok && response.error.retryable
+      && q.statusAttempts < retryDelays.length) {
     q.status = true;
-    q.retryAction = "status";
-    q.retryDelay = retryDelays[q.startupRetryCount++];
+    q.statusDue = now + retryDelays[q.statusAttempts++];
   }
-  var matches = sameAccount(q.runAccount, identity(state));
-  if (response.ok && (action === "login" || (action === "enable" && matches))) {
-    q.suspended = !!q.control;
-    if (action === "enable" && !q.suspended) { q.sync = true; q.intentAccount = q.runAccount; }
-  }
-  if (action === "sync" || action === "publish") {
-    if (response.ok) {
-      q.retryCount = 0;
-      q.retryDelay = 0;
-      if (q.runGeneration === q.generation) q.sync = false;
-    }
-    else if (matches && !accountChanged && q.runGeneration === q.generation && response.error.retryable
-        && response.error.code !== "authentication" && canAuto(state)
-        && (state.pending || response.error.code === "palette" || (!response.state && response.error.code === "busy"))
-        && !q.suspended && q.retryCount < retryDelays.length) {
-      q.sync = true;
-      q.intentAccount = q.runAccount;
-      q.retryAction = "sync";
-      q.retryDelay = retryDelays[q.retryCount++];
+  if (run && run.expectedAccount && response.error && response.error.code === "account-changed" && !response.state)
+    q.status = true;
+  if (action === "preview" && run.generation === q.generation) {
+    q.palette = response.ok ? response.palette : null;
+    if (!response.ok && response.error.retryable && q.previewAttempts < retryDelays.length) {
+      q.preview = true;
+      q.previewDue = now + retryDelays[q.previewAttempts++];
+    } else {
+      q.previewDue = 0; q.previewAttempts = 0;
+      if (!q.palette) { q.targets = []; q.fanout = false; q.preview = false; }
     }
   }
-  if (!canAuto(state) || q.suspended) {
-    q.sync = false;
-    if (q.retryAction !== "status") { q.retryDelay = 0; q.retryAction = ""; }
+  if (q.palette && !q.preview && !q.debouncing) {
+    q.targets.forEach(function(t) { enqueue(q, account(state, t)); });
+    q.targets = [];
+  }
+  if (response.ok && (action === "login" || action === "enable")) {
+    state.ships.forEach(function(row) {
+      var selected = action === "login" ? q.loginIds.indexOf(row.id) < 0 && row.pending
+        : sameAccount(run.expectedAccount, row);
+      if (!selected || !canAuto(row) || controlled(q, row)) return;
+      if (q.preview || !q.palette) {
+        if (!q.preview) { q.previewDue = 0; q.previewAttempts = 0; }
+        q.targets.push(identity(row)); q.preview = true;
+      } else enqueue(q, row);
+    });
+  }
+  if (action === "login") q.loginIds = [];
+  if (!q.knownState && !q.status && !q.preview) q.fanout = false;
+  if (action === "sync" && !response.ok && response.error.retryable
+      && response.error.code !== "authentication" && response.error.code !== "account-changed"
+      && run.generation === q.generation && canAuto(account(state, run.expectedAccount))
+      && !controlled(q, run.expectedAccount) && run.attempts < retryDelays.length) {
+    var retry = Object.assign({}, run);
+    retry.due = now + retryDelays[retry.attempts++];
+    q.jobs.push(retry);
   }
   return q;
-}
-
-function meaningfulError(previous, action, response) {
-  var observation = action === "status" || action === "preview";
-  if (!response.ok) return observation && previous ? previous : response.error.message;
-  return observation ? previous || response.state.lastError : "";
 }

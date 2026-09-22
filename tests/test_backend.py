@@ -57,8 +57,9 @@ class MemoryKeyring:
 class FakeEyre(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self):
+    def __init__(self, ship="~zod"):
         super().__init__(("127.0.0.1", 0), Handler)
+        self.ship = ship
         self.url = "http://127.0.0.1:" + str(self.server_port)
         self.body = {"desk": {"ui-prefs": {}, "other-bucket": {"opaque": "untouched"}}}
         self.requests = []
@@ -66,9 +67,11 @@ class FakeEyre(http.server.ThreadingHTTPServer):
         self.events = {}
         self.mode = "success"
         self.login_status = 200
+        self.logout_status = 303
+        self.sessions = {SECRET, "0v.other-client-session"}
         self.scry_status = 200
         self.scry_count = 0
-        self.login_cookie = "urbauth-~zod=" + SECRET + "; Path=/; HttpOnly"
+        self.login_cookie = "urbauth-" + ship + "=" + SECRET + "; Path=/; HttpOnly"
         self.thread = threading.Thread(target=self.serve_forever, daemon=True)
         self.thread.start()
 
@@ -78,7 +81,7 @@ class FakeEyre(http.server.ThreadingHTTPServer):
         self.thread.join()
 
     def session(self):
-        return dict(url=self.url, ship="~zod", cookieName="urbauth-~zod", cookieValue=SECRET)
+        return dict(url=self.url, ship=self.ship, cookieName="urbauth-" + self.ship, cookieValue=SECRET)
 
     def client(self, url=None, session=None):
         return Eyre(url or self.url, session or self.session(), timeout=0.15, ack_timeout=0.15)
@@ -108,6 +111,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         self.server.requests.append(("POST", self.path, raw, dict(self.headers)))
+        if self.path == "/~/logout":
+            if self.server.logout_status in (200, 303, 401):
+                cookie = self.headers.get("Cookie", "").partition("=")[2]
+                self.server.sessions.discard(cookie)
+            self.reply(self.server.logout_status, headers={"Location": "/~/login"})
+            return
         headers = {"Set-Cookie": self.server.login_cookie}
         if 300 <= self.server.login_status < 400:
             headers["Location"] = "/must-not-follow"
@@ -213,6 +222,14 @@ class PaletteTests(unittest.TestCase):
         (self.current / "theme.name").unlink()
         with self.assertRaises(Failure):
             resolve_palette(self.home, self.runner)
+
+    def test_theme_name_del_is_rejected_by_resolver(self):
+        for name in ("My\x7fTheme", "\x7fTheme", "Theme\x7f"):
+            with self.subTest(name=name):
+                (self.current / "theme.name").write_text(name + "\n")
+                with self.assertRaises(Failure) as caught:
+                    resolve_palette(self.home, self.runner)
+                self.assertEqual(caught.exception.code, "palette")
 
     def test_fingerprint_is_independent_of_key_order(self):
         self.assertEqual(fingerprint(PALETTE), fingerprint(dict(reversed(list(PALETTE.items())))))
@@ -327,6 +344,25 @@ class EyreTests(unittest.TestCase):
         self.assertEqual(parse_qs(request[2].decode()), {"password": [CODE]})
         self.assertNotIn("Cookie", request[3])
 
+    def test_logout_only_revokes_request_session_and_never_follows_redirect(self):
+        for status in (200, 303, 401):
+            self.server.sessions.add(SECRET)
+            self.server.logout_status = status
+            self.server.client().logout()
+            self.assertEqual(self.server.sessions, {"0v.other-client-session"})
+            method, path, raw, headers = self.server.requests[-1]
+            self.assertEqual((method, path, raw), ("POST", "/~/logout", b""))
+            self.assertEqual(headers["Cookie"], "urbauth-~zod=" + SECRET)
+        self.assertEqual(len(self.server.requests), 3)
+        for status in (301, 302, 307, 308, 403, 503):
+            self.server.logout_status = status
+            with self.assertRaises(Failure):
+                self.server.client().logout()
+        self.server.logout_status = 303
+        with self.assertRaises(Failure):
+            with self.server.client().request("POST", "/~/logout", b"all=1"):
+                pass
+
     def test_login_redirects_never_followed_even_with_cookie(self):
         for status in (301, 302, 303, 307, 308):
             self.server.login_status = status
@@ -429,14 +465,14 @@ class StateAndHelperTests(unittest.TestCase):
         self.addCleanup(self.server.close)
         self.palette = copy.deepcopy(PALETTE)
         self.helper = Helper(self.store, self.keyring, lambda: self.palette, self.server.transport)
-        self.expected_account = {"url": "", "ship": ""}
+        self.expected_account = {"id": "", "url": "", "ship": ""}
 
     def run_action(self, action, **value):
         if action in ("sync", "set-auto", "disconnect"):
             value.setdefault("expectedAccount", self.expected_account)
         response = self.helper.run(action, value)
-        if response["state"] is not None:
-            self.expected_account = {key: response["state"][key] for key in ("url", "ship")}
+        if response["state"] is not None and response["state"]["ships"]:
+            self.expected_account = {key: response["state"]["ships"][0][key] for key in ("id", "url", "ship")}
         return response
 
     def login(self):
@@ -474,7 +510,7 @@ class StateAndHelperTests(unittest.TestCase):
         with self.store.locked():
             before = self.store.load()
             changed = copy.deepcopy(before)
-            changed["state"]["automatic"] = True
+            changed["ships"][0]["automatic"] = False
             with patch("client.support.os.replace", side_effect=OSError("write failed")):
                 with self.assertRaises(OSError):
                     self.store.save(changed)
@@ -515,7 +551,7 @@ class StateAndHelperTests(unittest.TestCase):
         self.login()
         with self.store.locked():
             record = self.store.load()
-            record["state"]["url"] = "https://other.example"
+            record["ships"][0]["url"] = "https://OTHER.example/"
             self.store.save(record)
         self.assertFalse(self.run_action("status")["ok"])
 
@@ -554,13 +590,12 @@ class StateAndHelperTests(unittest.TestCase):
         for url, ship in ((self.server.url, "~nec"), ("https://other.example", "~zod")):
             with self.store.locked():
                 record = self.store.load()
-                record["state"].update(url=url, ship=ship, automatic=True, pending=True)
-                record["account"] = account(url, ship)
+                record["ships"][0].update(url=url, ship=ship, automatic=True, pending=True)
                 self.store.save(record)
             for action, options in (("sync", {"force": True}), ("set-auto", {"enabled": False}), ("disconnect", {})):
                 response = self.helper.run(action, dict(options, expectedAccount=expected))
                 self.assertEqual(response["error"]["code"], "account-changed")
-                self.assertEqual(response["state"], record["state"])
+                self.assertEqual(response["state"]["ships"], [{k: v for k, v in record["ships"][0].items() if k != "fingerprint"}])
             with self.store.locked():
                 self.assertEqual(self.store.load(), record)
         self.assertEqual(self.keyring.calls, ["store"])
@@ -589,14 +624,14 @@ class StateAndHelperTests(unittest.TestCase):
                     real_save(record)
 
                 with patch.object(self.store, "save", side_effect=fail_once):
-                    response = self.run_action("set-auto", enabled=True)
+                    response = self.run_action("set-auto", enabled=False)
                 self.assertFalse(response["ok"])
-                self.assertFalse(response["state"]["automatic"])
-                self.assertEqual(response["state"]["pending"], before["pending"])
+                self.assertTrue(response["state"]["ships"][0]["automatic"])
+                self.assertEqual(response["state"], before)
                 self.assertNotIn(SECRET, dumps(response))
                 with self.store.locked():
-                    self.assertEqual(response["state"], self.store.load()["state"])
-                self.assertEqual(count, 2 if isinstance(failure, RuntimeError) else 1)
+                    self.assertEqual(response["state"]["ships"][0]["pending"], self.store.load()["ships"][0]["pending"])
+                self.assertEqual(count, 1)
 
     def test_save_failure_and_failed_reload_returns_null(self):
         self.login()
@@ -621,10 +656,10 @@ class StateAndHelperTests(unittest.TestCase):
         with patch.object(self.store, "save", side_effect=committed_then_failed) as save:
             response = self.run_action("set-auto", enabled=True)
         self.assertFalse(response["ok"])
-        self.assertTrue(response["state"]["automatic"])
+        self.assertTrue(response["state"]["ships"][0]["automatic"])
         self.assertEqual(save.call_count, 1)
         with self.store.locked():
-            self.assertEqual(response["state"], self.store.load()["state"])
+            self.assertEqual(response["state"]["ships"][0]["automatic"], self.store.load()["ships"][0]["automatic"])
 
     def test_failed_pending_save_stops_before_palette_keyring_and_network(self):
         self.login()
@@ -633,7 +668,7 @@ class StateAndHelperTests(unittest.TestCase):
                 patch.object(self.helper, "palette") as palette:
             response = self.run_action("sync", force=True)
         self.assertFalse(response["ok"])
-        self.assertFalse(response["state"]["pending"])
+        self.assertTrue(response["state"]["ships"][0]["pending"])
         palette.assert_not_called()
         self.assertEqual(len(self.server.requests), requests)
         self.assertEqual(self.keyring.calls, calls)
@@ -643,20 +678,19 @@ class StateAndHelperTests(unittest.TestCase):
         real_save = self.store.save
 
         def fail_success(record):
-            if record["state"]["lastPublished"]:
+            if record["ships"][0]["lastPublished"]:
                 raise OSError(SECRET)
             real_save(record)
 
         with patch.object(self.store, "save", side_effect=fail_success):
             response = self.run_action("sync", force=True)
         self.assertFalse(response["ok"])
-        self.assertTrue(response["state"]["pending"])
-        self.assertEqual(response["state"]["lastPublished"], "")
-        self.assertEqual(response["state"]["lastTheme"], "")
+        self.assertTrue(response["state"]["ships"][0]["pending"])
+        self.assertEqual(response["state"]["ships"][0]["lastPublished"], "")
+        self.assertEqual(response["state"]["ships"][0]["lastTheme"], "")
         with self.store.locked():
             record = self.store.load()
-        self.assertEqual(record["state"], response["state"])
-        self.assertEqual(record["fingerprint"], "")
+        self.assertEqual(record["ships"][0], dict(response["state"]["ships"][0], fingerprint=""))
         self.assertTrue(self.run_action("sync", force=True)["ok"])
 
     def test_error_save_failure_does_not_report_uncommitted_error_metadata(self):
@@ -664,7 +698,7 @@ class StateAndHelperTests(unittest.TestCase):
         real_save = self.store.save
 
         def fail_error(record):
-            if record["state"]["lastError"]:
+            if record["ships"][0]["lastError"]:
                 raise OSError(SECRET)
             real_save(record)
 
@@ -673,26 +707,29 @@ class StateAndHelperTests(unittest.TestCase):
             response = self.run_action("sync", force=True)
         self.assertFalse(response["ok"])
         self.assertEqual(response["error"]["code"], "state")
-        self.assertTrue(response["state"]["pending"])
-        self.assertEqual(response["state"]["lastError"], before["lastError"])
+        self.assertTrue(response["state"]["ships"][0]["pending"])
+        self.assertEqual(response["state"]["ships"][0]["lastError"], before["ships"][0]["lastError"])
         with self.store.locked():
-            self.assertEqual(response["state"], self.store.load()["state"])
+            self.assertEqual(dict(response["state"]["ships"][0], fingerprint=""), self.store.load()["ships"][0])
 
-    def test_login_is_off_and_refuses_implicit_replacement(self):
+    def test_login_records_consent_and_refuses_duplicate_origin(self):
         response = self.login()
-        self.assertFalse(response["state"]["automatic"])
+        self.assertTrue(response["state"]["ships"][0]["automatic"])
+        self.assertTrue(response["state"]["ships"][0]["pending"])
+        self.assertEqual(self.server.messages, [])
         before = len(self.server.requests)
-        response = self.run_action("login", url="https://other.example", code=CODE)
+        response = self.run_action("login", url=self.server.url + "/", code=CODE)
         self.assertFalse(response["ok"])
+        self.assertEqual(response["error"]["code"], "duplicate-origin")
         self.assertEqual(len(self.server.requests), before)
-        self.assertEqual(response["state"]["url"], self.server.url)
+        self.assertEqual(response["state"]["ships"][0]["url"], self.server.url)
 
     def test_no_plaintext_fallback_if_keyring_store_fails(self):
         self.keyring.fail = True
         response = self.run_action("login", url=self.server.url, code=CODE)
         self.assertFalse(response["ok"])
-        self.assertFalse(response["state"]["connected"])
-        self.assertNotIn(SECRET, (self.store.root / "state.json").read_text())
+        self.assertEqual(response["state"], {"ships": []})
+        self.assertFalse((self.store.root / "state.json").exists())
 
     def test_login_is_not_connected_after_silent_keyring_store_failure(self):
         for output in (b"", dumps(dict(self.server.session(), cookieValue="old-cookie")).encode()):
@@ -706,11 +743,11 @@ class StateAndHelperTests(unittest.TestCase):
             response = self.run_action("login", url=self.server.url, code=CODE)
             self.assertFalse(response["ok"])
             self.assertEqual(response["error"]["code"], "keyring")
-            self.assertFalse(response["state"]["connected"])
+            self.assertEqual(response["state"], {"ships": []})
             self.assertEqual(calls, ["store", "lookup"])
             self.assertNotIn(SECRET, dumps(response))
             with self.store.locked():
-                self.assertFalse(self.store.load()["state"]["connected"])
+                self.assertEqual(self.store.load(), empty_record())
 
     def test_committed_login_save_failure_does_not_remove_persisted_accounts_session(self):
         real_save = self.store.save
@@ -722,13 +759,14 @@ class StateAndHelperTests(unittest.TestCase):
         with patch.object(self.store, "save", side_effect=committed_then_failed):
             response = self.run_action("login", url=self.server.url, code=CODE)
         self.assertFalse(response["ok"])
-        self.assertTrue(response["state"]["connected"])
+        self.assertEqual(len(response["state"]["ships"]), 1)
         self.assertEqual(self.keyring.calls, ["store"])
         self.assertEqual(self.keyring.sessions[self.server.url], self.server.session())
 
     def test_consent_only_and_manual_publish(self):
         self.assertFalse(self.run_action("set-auto", enabled=True)["ok"])
         self.login()
+        self.run_action("set-auto", enabled=False)
         before = len(self.server.requests)
         self.assertTrue(self.run_action("sync")["ok"])
         self.assertEqual(len(self.server.requests), before)
@@ -737,11 +775,12 @@ class StateAndHelperTests(unittest.TestCase):
         self.run_action("set-auto", enabled=False)
         response = self.run_action("sync", force=True)
         self.assertTrue(response["ok"], response)
-        self.assertFalse(response["state"]["automatic"])
-        self.assertTrue(response["state"]["lastPublished"])
+        self.assertFalse(response["state"]["ships"][0]["automatic"])
+        self.assertTrue(response["state"]["ships"][0]["lastPublished"])
 
     def test_paused_sync_does_not_resolve_palette_or_access_session(self):
         self.login()
+        self.run_action("set-auto", enabled=False)
         calls, requests = list(self.keyring.calls), len(self.server.requests)
         with patch.object(self.helper, "palette") as palette, patch.object(self.store, "save") as save:
             response = self.run_action("sync")
@@ -761,11 +800,11 @@ class StateAndHelperTests(unittest.TestCase):
                 response = self.run_action("sync", force=force)
             self.assertFalse(response["ok"])
             self.assertTrue(response["error"]["retryable"])
-            self.assertTrue(response["state"]["pending"])
+            self.assertTrue(response["state"]["ships"][0]["pending"])
             with self.store.locked():
                 record = self.store.load()
-            self.assertTrue(record["state"]["pending"])
-            self.assertEqual(record["account"], account(self.server.url, "~zod"))
+            self.assertTrue(record["ships"][0]["pending"])
+            self.assertEqual(record["ships"][0]["id"], self.expected_account["id"])
             # A retry with the same palette must honor the deliberately saved intent.
             remote = entries(self.server.body)["themes"]
             remote["activeId"] = None
@@ -773,8 +812,8 @@ class StateAndHelperTests(unittest.TestCase):
             self.assertTrue(self.run_action("sync")["ok"])
             self.assertEqual(entries(self.server.body)["themes"]["activeId"], PLUGIN_ID)
         with patch.object(self.helper, "palette", side_effect=Failure("palette", "Palette unavailable.", True)):
-            self.assertTrue(self.run_action("sync")["state"]["pending"])
-        self.assertFalse(self.run_action("set-auto", enabled=False)["state"]["pending"])
+            self.assertTrue(self.run_action("sync")["state"]["ships"][0]["pending"])
+        self.assertFalse(self.run_action("set-auto", enabled=False)["state"]["ships"][0]["pending"])
 
     def test_unchanged_palette_scry_failure_does_not_create_publication_intent(self):
         self.login()
@@ -787,7 +826,7 @@ class StateAndHelperTests(unittest.TestCase):
         self.server.scry_status = 503
         response = self.run_action("sync")
         self.assertFalse(response["ok"])
-        self.assertFalse(response["state"]["pending"])
+        self.assertFalse(response["state"]["ships"][0]["pending"])
         self.server.scry_status = 200
         self.assertTrue(self.run_action("sync")["ok"])
         self.assertEqual(len(self.server.messages), messages)
@@ -849,7 +888,7 @@ class StateAndHelperTests(unittest.TestCase):
         self.server.body["desk"]["ui-prefs"]["themes"] = dumps(remote)
         requests = len(self.server.requests)
         enabled = self.run_action("set-auto", enabled=True)
-        self.assertTrue(enabled["state"]["pending"])
+        self.assertTrue(enabled["state"]["ships"][0]["pending"])
         self.assertEqual(len(self.server.requests), requests)
         self.assertTrue(self.run_action("sync")["ok"])
         self.assertEqual(entries(self.server.body)["themes"]["activeId"], PLUGIN_ID)
@@ -860,8 +899,8 @@ class StateAndHelperTests(unittest.TestCase):
         self.server.mode = "nack-accent"
         response = self.run_action("sync")
         self.assertFalse(response["ok"])
-        self.assertTrue(response["state"]["pending"])
-        self.assertEqual(response["state"]["lastPublished"], "")
+        self.assertTrue(response["state"]["ships"][0]["pending"])
+        self.assertEqual(response["state"]["ships"][0]["lastPublished"], "")
         self.assertNotIn(SECRET, dumps(response))
         self.assertEqual(entries(self.server.body)["themes"]["activeId"], PLUGIN_ID)
         self.server.mode = "success"
@@ -870,22 +909,23 @@ class StateAndHelperTests(unittest.TestCase):
         retried = [m["json"]["put-entry"]["entry-key"] for m in self.server.messages[before:]
                    if m["action"] == "poke"]
         self.assertEqual(retried, ["themes", "accent"])
-        self.assertFalse(self.run_action("status")["state"]["pending"])
+        self.assertFalse(self.run_action("status")["state"]["ships"][0]["pending"])
         self.server.mode = "timeout-no-write"
         self.palette["primary"] = "#123456"
         self.assertFalse(self.run_action("sync")["ok"])
         response = self.run_action("set-auto", enabled=False)
-        self.assertFalse(response["state"]["pending"])
+        self.assertFalse(response["state"]["ships"][0]["pending"])
 
     def test_expired_authentication_is_not_retried(self):
         self.login()
         self.run_action("set-auto", enabled=True)
         self.server.scry_status = 401
         response = self.run_action("sync")
-        self.assertTrue(response["state"]["authenticationRequired"])
+        self.assertTrue(response["state"]["ships"][0]["authenticationRequired"])
+        self.assertFalse(response["state"]["ships"][0]["automatic"])
         self.assertFalse(response["error"]["retryable"])
         before = len(self.server.requests)
-        self.assertFalse(self.run_action("sync")["ok"])
+        self.assertTrue(self.run_action("sync")["ok"])
         self.assertEqual(len(self.server.requests), before)
 
     def test_transient_scry_failure_keeps_pending_without_writes(self):
@@ -895,8 +935,8 @@ class StateAndHelperTests(unittest.TestCase):
         response = self.run_action("sync")
         self.assertFalse(response["ok"])
         self.assertTrue(response["error"]["retryable"])
-        self.assertTrue(response["state"]["pending"])
-        self.assertEqual(response["state"]["lastPublished"], "")
+        self.assertTrue(response["state"]["ships"][0]["pending"])
+        self.assertEqual(response["state"]["ships"][0]["lastPublished"], "")
         self.assertEqual(self.server.messages, [])
         self.server.scry_status = 200
         self.assertTrue(self.run_action("sync")["ok"])
@@ -908,7 +948,7 @@ class StateAndHelperTests(unittest.TestCase):
         response = self.run_action("sync", force=True)
         self.assertFalse(response["ok"])
         self.assertFalse(response["error"]["retryable"])
-        self.assertTrue(response["state"]["pending"])
+        self.assertTrue(response["state"]["ships"][0]["pending"])
         self.assertEqual(self.server.body, before)
         self.assertEqual(self.server.messages, [])
 
@@ -919,20 +959,22 @@ class StateAndHelperTests(unittest.TestCase):
         requests = len(self.server.requests)
         response = self.run_action("disconnect")
         self.assertTrue(response["ok"])
-        self.assertFalse(response["state"]["connected"])
+        self.assertEqual(response["state"], {"ships": []})
         self.assertEqual(self.keyring.sessions, {})
         self.assertEqual(self.server.body, before)
-        self.assertEqual(len(self.server.requests), requests)
-        self.assertTrue(self.run_action("disconnect")["ok"])
+        self.assertEqual(len(self.server.requests), requests + 1)
+        self.assertEqual(self.server.requests[-1][:3], ("POST", "/~/logout", b""))
+        self.assertFalse(self.run_action("disconnect")["ok"])
 
     def test_disconnect_keyring_failure_still_stops_auto(self):
         self.login()
         self.run_action("set-auto", enabled=True)
         self.keyring.fail = True
         response = self.run_action("disconnect")
-        self.assertFalse(response["ok"])
-        self.assertFalse(response["state"]["automatic"])
-        self.assertTrue(response["state"]["connected"])
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["state"], {"ships": []})
+        self.assertEqual(response["warning"]["code"], "cleanup")
+        self.assertEqual(self.keyring.calls[-2:], ["lookup", "clear"])
 
     def test_disconnect_pause_save_failure_does_not_clear_session_or_report_paused(self):
         self.login()
@@ -951,20 +993,19 @@ class StateAndHelperTests(unittest.TestCase):
         real_save = self.store.save
 
         def fail_disconnection(record):
-            if not record["state"]["connected"]:
+            if not record["ships"]:
                 raise OSError(SECRET)
             real_save(record)
 
         with patch.object(self.store, "save", side_effect=fail_disconnection):
             response = self.run_action("disconnect")
         self.assertFalse(response["ok"])
-        self.assertTrue(response["state"]["connected"])
-        self.assertFalse(response["state"]["automatic"])
-        self.assertFalse(response["state"]["pending"])
-        self.assertEqual(response["state"]["url"], self.server.url)
-        self.assertEqual(self.keyring.sessions, {})
+        self.assertTrue(response["state"]["ships"][0]["automatic"])
+        self.assertTrue(response["state"]["ships"][0]["pending"])
+        self.assertEqual(response["state"]["ships"][0]["url"], self.server.url)
+        self.assertIn(self.server.url, self.keyring.sessions)
         with self.store.locked():
-            self.assertEqual(response["state"], self.store.load()["state"])
+            self.assertEqual(dict(response["state"]["ships"][0], fingerprint=""), self.store.load()["ships"][0])
         self.assertTrue(self.run_action("disconnect")["ok"])
 
     def test_unexpected_errors_are_sanitized(self):
@@ -1052,7 +1093,8 @@ class CommandAndKeyringTests(unittest.TestCase):
                 self.assertEqual(result.returncode, code)
                 self.assertEqual(result.stderr, b"")
                 response = json.loads(result.stdout)
-                self.assertEqual(set(response), {"schemaVersion", "ok", "state", "palette", "error"})
+                self.assertEqual(set(response), {"schemaVersion", "ok", "state", "palette", "error", "warning"})
+                self.assertEqual(response["schemaVersion"], 2)
                 self.assertNotIn(SECRET.encode(), result.stdout)
                 self.assertNotIn(CODE.encode(), result.stdout)
 
@@ -1074,7 +1116,7 @@ class CommandAndKeyringTests(unittest.TestCase):
         script = Path(__file__).resolve().parents[1] / "client/main.py"
         with tempfile.TemporaryDirectory() as temp:
             env = dict(os.environ, HOME=temp, XDG_STATE_HOME=temp, PATH="/nonexistent")
-            expected = {"url": "", "ship": ""}
+            expected = {"id": "0" * 64, "url": "https://ship.example", "ship": "~zod"}
             for action, options in (("sync", {"force": False}), ("set-auto", {"enabled": False}), ("disconnect", {})):
                 for supplied in (False, True):
                     value = dict(options, expectedAccount=expected) if supplied else options
@@ -1082,11 +1124,10 @@ class CommandAndKeyringTests(unittest.TestCase):
                                             capture_output=True, env=env, timeout=5)
                     response = json.loads(result.stdout)
                     self.assertEqual(result.stderr, b"")
-                    self.assertEqual(response["ok"], supplied)
-                    self.assertEqual(result.returncode, 0 if supplied else 1)
-                    if not supplied:
-                        self.assertEqual(response["error"]["code"], "account-changed")
-                        self.assertFalse(response["error"]["retryable"])
+                    self.assertFalse(response["ok"])
+                    self.assertEqual(result.returncode, 1)
+                    self.assertEqual(response["error"]["code"], "account-changed")
+                    self.assertFalse(response["error"]["retryable"])
 
 
 if __name__ == "__main__":
