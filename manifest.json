@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "thelifeandtimes.urbit-theme",
   "name": "Network Theme",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "author": "Stuart Christoph",
   "license": "MIT",
   "description": "Share a full Omarchy appearance profile across computers through Urbit settings, with an eleven-color Talon bridge.",

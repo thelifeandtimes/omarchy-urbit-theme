@@ -175,7 +175,7 @@ Ui.Panel {
                 readonly property string description: modelData + " · " + (root.currentPalette && root.currentPalette[modelData] ? root.currentPalette[modelData] : "Auto")
                 Accessible.name: description
                 HoverHandler { id: swatchHover }
-                Controls.ToolTip { visible: swatchHover.hovered; text: parent.description; delay: 250 }
+                ThemeToolTip { visible: swatchHover.hovered; text: parent.description; delay: 250 }
               }
             }
           }
@@ -218,7 +218,7 @@ Ui.Panel {
                   elide: Text.ElideRight
                   property string tooltipText: shipRow.modelData.url
                   HoverHandler { id: shipHover }
-                  Controls.ToolTip {
+                  ThemeToolTip {
                     objectName: "shipUrlTooltip-" + shipRow.modelData.id
                     visible: shipHover.hovered
                     text: shipRow.modelData.url
@@ -254,7 +254,7 @@ Ui.Panel {
                   Keys.onReturnPressed: if (enabled) toggled()
                   onToggled: root.toggleDesktop(shipRow.modelData)
                   onActiveFocusChanged: if (activeFocus) root.reveal(this)
-                  Controls.ToolTip { visible: parent.containsMouse; text: parent.tooltipText; delay: 400 }
+                  ThemeToolTip { visible: parent.containsMouse; text: parent.tooltipText; delay: 400 }
                 }
                 IconAction {
                   objectName: "automatic-" + shipRow.modelData.id
@@ -364,6 +364,31 @@ Ui.Panel {
           }
         }
       }
+    }
+  }
+  component ThemeToolTip: Controls.ToolTip {
+    id: tip
+    // Match Omarchy's Ui.Button tooltip surface, including gradient/per-side
+    // borders, instead of inheriting the platform's default yellow tooltip.
+    readonly property var borderStyle: Border.surfaceSpec("tooltip", "border", Color.tooltip.border, Math.max(1, Style.normalBorderWidth))
+    padding: 0
+    width: Math.min(implicitWidth, Style.space(300), Math.max(1, content.width))
+    background: Ui.BorderSurface {
+      color: Color.tooltip.background
+      borderSpec: tip.borderStyle
+      radius: 0
+    }
+    contentItem: Text {
+      text: tip.text
+      textFormat: Text.PlainText
+      wrapMode: Text.Wrap
+      color: Color.tooltip.text
+      font.family: Style.font.family
+      font.pixelSize: Style.font.bodySmall
+      leftPadding: Border.left(tip.borderStyle) + Style.spacing.controlPaddingX
+      rightPadding: Border.right(tip.borderStyle) + Style.spacing.controlPaddingX
+      topPadding: Border.top(tip.borderStyle) + Style.spacing.controlPaddingY
+      bottomPadding: Border.bottom(tip.borderStyle) + Style.spacing.controlPaddingY
     }
   }
   component Body: Text {
