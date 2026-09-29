@@ -244,11 +244,46 @@ class Desktop:
         self.current = self.home / ".local/state/omarchy/current"
         self.runner = runner
 
+    @staticmethod
+    def command_label(args):
+        # Labels are constant prefixes, never arbitrary arguments (font names,
+        # paths, encoded theme payloads, or anything supplied by a caller).
+        labels = (("omarchy", "theme", "color"), ("omarchy", "theme", "set"),
+                  ("omarchy", "font", "current"), ("omarchy", "font", "set"),
+                  ("hyprctl", "--batch"), ("hyprctl", "-j", "animations"),
+                  ("hyprctl", "-j", "configerrors"), ("hyprctl", "reload"),
+                  ("omarchy-shell", "shell", "applyTheme"), ("fc-list",))
+        return next((" ".join(prefix) for prefix in labels if tuple(args[:len(prefix)]) == prefix), "local appearance command")
+
     def run(self, args, **kwargs):
-        code, out = self.runner(args, **kwargs)
+        label = self.command_label(args)
+        try:
+            code, out = self.runner(args, **kwargs)
+        except Failure as error:
+            if error.code != "command":
+                raise
+            reason = getattr(error, "reason", "unknown")
+            detail = {
+                "missing": "was not found in the plugin's PATH",
+                "permission": "could not start because permission was denied",
+                "start": "could not be started",
+                "timeout": "did not finish within " + str(kwargs.get("timeout", 8)) + " seconds",
+                "output": "exceeded its " + str(kwargs.get("limit", 65536)) + "-byte output limit",
+                "io": "failed while communicating with the process",
+            }.get(reason, "could not complete")
+            raise Failure("desktop-command", "'" + label + "' " + detail + ". The shared profile is retained for retry.", True) from None
         if code:
-            raise Failure("desktop", "An Omarchy appearance command failed. The shared profile is retained for retry.", True)
+            raise Failure("desktop-command", "'" + label + "' exited with status " + str(code)
+                          + ". The shared profile is retained for retry.", True)
         return out.decode("utf-8")
+
+    def require_font(self, family):
+        # Query the requested family, not every installed face. A normal large
+        # font collection can exceed the generic command output cap.
+        escaped = "".join("\\" + c if c in "\\,:-" else c for c in family)
+        fonts = self.run(["fc-list", "--format", "%{family}\n", "--", ":family=" + escaped])
+        if family.casefold() not in {alias.strip().casefold() for line in fonts.splitlines() for alias in line.split(",")}:
+            raise Failure("missing-font", "Install the shared font '" + family + "', then retry.")
 
     def capture(self, device):
         lock = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "omarchy-theme-set.lock"
@@ -290,9 +325,7 @@ class Desktop:
         user = self.home / ".config/omarchy/themes" / name
         if not stock.is_dir() and not user.is_dir():
             raise Failure("missing-theme", "Install the shared theme '" + name + "', then retry.")
-        fonts = self.run(["fc-list", "--format", "%{family}\n"])
-        if profile["font"].casefold() not in {alias.strip().casefold() for line in fonts.splitlines() for alias in line.split(",")}:
-            raise Failure("missing-font", "Install the shared font '" + profile["font"] + "', then retry.")
+        self.require_font(profile["font"])
         managed = self.home / ".config/omarchy/themes" / MANAGED_THEME
         marker = managed / ".urbit-theme-managed"
         if managed.exists() and (managed.is_symlink() or not marker.is_file()):

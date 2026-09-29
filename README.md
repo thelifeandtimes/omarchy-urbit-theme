@@ -128,11 +128,11 @@ not update the running plugin.
 Build a self-contained source/install bundle (no credentials or local state):
 
 ```sh
-python3 -B scripts/package.py /path/to/omarchy-urbit-theme-0.3.1.tar.gz
+python3 -B scripts/package.py /path/to/omarchy-urbit-theme-0.3.2.tar.gz
 ```
 
 Copy it to the other machine, extract it, and run the install command above
-from its `omarchy-urbit-theme-0.3.1` directory. This works without publishing a
+from its `omarchy-urbit-theme-0.3.2` directory. This works without publishing a
 Git commit or installing any extra runtime dependencies.
 
 ## Controls and behavior
@@ -219,6 +219,12 @@ python3 -B scripts/check-desktop.py
 
 The final command captures local appearance and validates generated Lua using
 Hyprland's config-only verifier, without applying it.
+
+Version 0.3.2 fixes a first-sync failure on computers with large font collections:
+font availability checks query only the requested family rather than exceeding
+the command runner's output limit with the entire catalog. Desktop command
+errors now identify the command and distinguish missing executables, timeouts,
+output limits, and nonzero exits without exposing arguments or captured output.
 
 ```sh
 python3 -B -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py'

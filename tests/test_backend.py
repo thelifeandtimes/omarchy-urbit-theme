@@ -1070,12 +1070,20 @@ class CommandAndKeyringTests(unittest.TestCase):
             self.assertNotIn(SECRET, str(caught.exception))
 
     def test_subprocess_time_and_output_bounds(self):
-        for source, options in (("import time; time.sleep(2)", {"timeout": 0.05}),
-                                ("import sys; sys.stdout.write('x' * 10000)", {"limit": 20})):
+        for source, options, reason in (("import time; time.sleep(2)", {"timeout": 0.05}, "timeout"),
+                                        ("import sys; sys.stdout.write('x' * 10000)", {"limit": 20}, "output")):
             started = time.monotonic()
-            with self.assertRaises(Failure):
+            with self.assertRaises(Failure) as caught:
                 command([sys.executable, "-c", source], **options)
+            self.assertEqual(caught.exception.reason, reason)
+            self.assertEqual(caught.exception.code, "command")
             self.assertLess(time.monotonic() - started, 1)
+
+    def test_missing_command_is_classified_without_exposing_argv(self):
+        with self.assertRaises(Failure) as caught:
+            command(["/nonexistent-urbit-theme-command", SECRET])
+        self.assertEqual(caught.exception.reason, "missing")
+        self.assertNotIn(SECRET, caught.exception.message)
 
     def test_subprocess_stdin_and_stderr(self):
         result, output = command([sys.executable, "-c",

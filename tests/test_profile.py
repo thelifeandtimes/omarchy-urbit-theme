@@ -7,13 +7,14 @@ from pathlib import Path
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from client.profile import (Desktop, MANAGED_THEME, colors_toml, digest, palette, parse_shell,
                             read_remote, shell_toml, validate, window_lua)
-from client.support import Failure
+from client.support import CommandFailure, Failure, command
 
 
 def profile(theme="tokyo-night", color="#112233", device="a" * 32):
@@ -197,6 +198,49 @@ class DesktopTests(unittest.TestCase):
         self.errors = ["unsupported option"]
         with self.assertRaises(Failure):
             Desktop(self.home, self.runner).apply(profile())
+
+    def test_large_font_catalog_does_not_prevent_shared_profile_application(self):
+        # Reproduce the affected machine's 116,124-byte listing through the real
+        # bounded subprocess runner. The filtered family remains a small result.
+        fontconfig = '''
+import sys
+if ":family=Fixture Mono" in sys.argv:
+    print("Fixture Mono,FixtureMono")
+else:
+    sys.stdout.write("Fixture Mono\\n" + "x" * (116124 - len("Fixture Mono\\n")))
+'''
+        def runner(args, **kwargs):
+            if args[0] == "fc-list":
+                return command([sys.executable, "-c", fontconfig, *args[1:]], **kwargs)
+            return self.runner(args, **kwargs)
+
+        with self.assertRaises(CommandFailure) as error:
+            runner(["fc-list", "--format", "%{family}\n"])
+        self.assertEqual(error.exception.reason, "output")
+        Desktop(self.home, runner).apply(profile())
+        self.assertEqual((self.current / "theme.name").read_text(), "tokyo-night\n")
+
+    def test_command_failures_name_only_the_safe_command_and_reason(self):
+        for reason, message in (("missing", "not found"), ("permission", "permission was denied"),
+                                ("timeout", "90 seconds"), ("output", "65536-byte output limit"),
+                                ("io", "communicating"), ("start", "could not be started")):
+            def runner(args, **kwargs):
+                raise CommandFailure(reason)
+            with self.subTest(reason=reason), self.assertRaises(Failure) as caught:
+                Desktop(self.home, runner).run(["omarchy-shell", "shell", "applyTheme", "PRIVATE-PAYLOAD"], timeout=90)
+            self.assertIn("omarchy-shell shell applyTheme", caught.exception.message)
+            self.assertIn(message, caught.exception.message)
+            self.assertNotIn("PRIVATE-PAYLOAD", caught.exception.message)
+            self.assertEqual(caught.exception.code, "desktop-command")
+
+    def test_nonzero_exit_names_command_without_forwarding_output(self):
+        def runner(args, **kwargs):
+            return 7, b"PRIVATE-OUTPUT"
+        with self.assertRaises(Failure) as caught:
+            Desktop(self.home, runner).run(["omarchy", "theme", "set", "private-theme"])
+        self.assertIn("'omarchy theme set' exited with status 7", caught.exception.message)
+        self.assertNotIn("PRIVATE-OUTPUT", caught.exception.message)
+        self.assertNotIn("private-theme", caught.exception.message)
 
 
 if __name__ == "__main__":

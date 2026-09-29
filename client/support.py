@@ -31,6 +31,13 @@ class Failure(Exception):
         return dict(code=self.code, message=self.message, retryable=self.retryable)
 
 
+class CommandFailure(Failure):
+    """Internal classification; never include argv, stdin, or captured output."""
+    def __init__(self, reason):
+        super().__init__("command", "A required local command failed or is unavailable.", True)
+        self.reason = reason
+
+
 def malformed():
     return Failure("malformed", "Existing data is malformed; nothing was replaced.")
 
@@ -92,12 +99,15 @@ def origin(value):
 
 def command(argv, data=b"", timeout=8, limit=65536, env=None):
     """Bound both time and output, without placing captured secrets on disk."""
-    error = Failure("command", "A required local command failed or is unavailable.", True)
     try:
         process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.DEVNULL, start_new_session=True, env=env)
+    except FileNotFoundError:
+        raise CommandFailure("missing") from None
+    except PermissionError:
+        raise CommandFailure("permission") from None
     except OSError:
-        raise error from None
+        raise CommandFailure("start") from None
     output = bytearray()
     deadline = time.monotonic() + timeout
     try:
@@ -113,7 +123,7 @@ def command(argv, data=b"", timeout=8, limit=65536, env=None):
             while selector.get_map():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise error
+                    raise CommandFailure("timeout")
                 for key, _ in selector.select(remaining):
                     if key.fileobj is process.stdin:
                         sent += os.write(process.stdin.fileno(), data[sent:sent + 4096])
@@ -126,11 +136,13 @@ def command(argv, data=b"", timeout=8, limit=65536, env=None):
                             selector.unregister(process.stdout)
                         output.extend(chunk)
                         if len(output) > limit:
-                            raise error
+                            raise CommandFailure("output")
             result = process.wait(timeout=max(0.001, deadline - time.monotonic()))
             return result, bytes(output)
-    except (OSError, subprocess.TimeoutExpired):
-        raise error from None
+    except subprocess.TimeoutExpired:
+        raise CommandFailure("timeout") from None
+    except OSError:
+        raise CommandFailure("io") from None
     finally:
         # Also reap children of shell-based commands if they outlive their parent.
         with contextlib.suppress(ProcessLookupError):
