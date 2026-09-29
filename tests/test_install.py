@@ -177,12 +177,23 @@ class InstallTest(unittest.TestCase):
         self.install()
         receipt_path = self.target / installer.MARKER
         receipt = json.loads(receipt_path.read_text())
-        (self.target / "client/native.py").unlink()
-        del receipt["files"]["client/native.py"]
+        for name in set(installer.FILES) - set(installer.PROFILE_FILES):
+            (self.target / name).unlink()
+            del receipt["files"][name]
         receipt_path.write_text(json.dumps(receipt))
         installer.inspect(self.target, self.hook)
         self.install(replace=True)
         self.assertTrue((self.target / "client/native.py").is_file())
+
+    def test_upgrade_adds_icon_to_previous_native_capable_snapshot(self):
+        self.install()
+        receipt_path = self.target / installer.MARKER
+        receipt = json.loads(receipt_path.read_text())
+        (self.target / "ThemeIcon.qml").unlink()
+        del receipt["files"]["ThemeIcon.qml"]
+        receipt_path.write_text(json.dumps(receipt))
+        self.install(replace=True)
+        self.assertTrue((self.target / "ThemeIcon.qml").is_file())
 
 
 if __name__ == "__main__":

@@ -131,7 +131,8 @@ Both destinations are checked before either is changed. Snapshot installations
 continue to use their installer's hook ownership and upgrade procedure.
 
 The first configured ship is the default desktop hub. Additional ships receive
-the same profile's Talon colors. `H` explicitly changes the hub. A replacement
+the same profile's Talon colors. The labeled `Sync desktops` switch explicitly
+selects the hub; switching it off pauses desktop sync on this computer. A replacement
 login for the same ship/origin adopts the hub afresh rather than replaying an
 old connection's pending action. Pausing the hub row also stops desktop sync.
 Desktop pause retains the current appearance; resume adopts the hub.

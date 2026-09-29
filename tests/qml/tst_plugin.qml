@@ -59,6 +59,9 @@ Item {
       fake.lastControl = ""
       fake.lastAccount = null
       fake.lastError = ""
+      fake.desktopEnabled = false
+      fake.desktopState = { status: "Following shared appearance", error: "", hub: null, paused: false, theme: "", bridgeErrors: {} }
+      fake.lastDesktopCommand = null
       widget = panelComponent.createObject(parent)
       verify(widget !== null)
     }
@@ -210,11 +213,11 @@ Item {
       var pause = control("automatic-" + a.id), sync = control("automatic-" + b.id)
       compare(pause.text, "")
       verify(control("pauseBars-" + a.id).visible)
-      compare(pause.tooltipText, "Pause automatic syncing for ~zod")
+      verify(pause.tooltipText.startsWith("Pause automatic syncing for ~zod"))
       compare(pause.Accessible.name, pause.tooltipText)
-      compare(sync.text, "\u21bb")
+      compare(sync.text, "\u25b6")
       verify(!control("pauseBars-" + b.id).visible)
-      compare(sync.tooltipText, "Resume automatic syncing for ~nec")
+      verify(sync.tooltipText.startsWith("Resume automatic syncing for ~nec"))
       compare(sync.Accessible.name, sync.tooltipText)
       var name = control("shipName-" + a.id)
       compare(name.text, "~zod")
@@ -230,7 +233,11 @@ Item {
       mouseMove(control("refresh"), 1, 1)
       tryCompare(tooltip, "visible", false)
       verify(!control("shipStatus-" + a.id).text.includes(a.url))
-      compare(control("disconnect-" + a.id).text, "X")
+      compare(control("disconnect-" + a.id).text, "×")
+      compare(pause.width, control("disconnect-" + a.id).width)
+      compare(pause.height, control("disconnect-" + a.id).height)
+      compare(sync.width, pause.width)
+      compare(sync.height, pause.height)
       verify(control("disconnect-" + a.id).tooltipText.includes("log out and forget"))
       fake.busy = true
       verify(pause.enabled)
@@ -259,6 +266,50 @@ Item {
       verify(control("shipStatus-" + a.id).text.includes("Session expired"))
       control("disconnect-" + a.id).clicked()
       compare(fake.lastControl, "disconnect")
+    }
+    function test_desktopSwitchSelectsOneShipAndPausesOrResumesItsHub() {
+      var a = row("a", true), b = row("b", false)
+      fake.account = state([a, b])
+      fake.desktopEnabled = true
+      fake.desktopState = { status: "Following shared appearance", error: "", hub: Model.identity(a), paused: false, theme: "Fixture" }
+      widget.service = fake
+      widget.open()
+      wait(30)
+      var first = control("desktop-" + a.id), second = control("desktop-" + b.id)
+      verify(first.checked)
+      verify(!second.checked)
+      compare(first.width, control("disconnect-" + a.id).width)
+      compare(first.height, control("disconnect-" + a.id).height)
+      first.forceActiveFocus()
+      keyClick(Qt.Key_Space)
+      compare(fake.lastDesktopCommand.action, "pause")
+      fake.desktopState = { status: "Paused", error: "", hub: Model.identity(a), paused: true, theme: "Fixture" }
+      verify(!first.checked)
+      first.toggled()
+      compare(fake.lastDesktopCommand.action, "resume")
+      second.toggled()
+      compare(fake.lastControl, "enable")
+      compare(fake.lastAccount.id, b.id)
+      compare(fake.lastDesktopCommand.action, "hub")
+      compare(fake.lastDesktopCommand.id, b.id)
+      b.automatic = true
+      fake.account = state([a, b])
+      fake.desktopState = { status: "Following shared appearance", error: "", hub: Model.identity(b), paused: false, theme: "Fixture" }
+      verify(!control("desktop-" + a.id).checked)
+      verify(control("desktop-" + b.id).checked)
+    }
+    function test_compactPaletteAndHeaderRetainAccessibleLabels() {
+      fake.account = state([row("a", true)])
+      widget.service = fake
+      widget.open()
+      wait(30)
+      compare(control("paletteSection").title, "Network Theme")
+      verify(control("swatch-muted") === null)
+      var first = control("swatch-primary"), last = control("swatch-link")
+      compare(first.y, last.y)
+      verify(last.x > first.x)
+      verify(first.Accessible.name.includes("primary"))
+      compare(control("addUrbit").parent, control("shipsHeader"))
     }
     function test_serviceFanoutSamePaletteAndRemoveDuringOtherFlight() {
       var a = row("a", true), b = row("b", true), c = row("c", true)

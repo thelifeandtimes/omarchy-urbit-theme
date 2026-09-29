@@ -8,7 +8,7 @@ const root = path.resolve(__dirname, "../..");
 const shell = process.env.OMARCHY_SHELL_SOURCE || "/usr/share/omarchy/shell";
 const qmlRunner = process.env.QMLTESTRUNNER || (fs.existsSync("/usr/lib/qt6/bin/qmltestrunner") ? "/usr/lib/qt6/bin/qmltestrunner" : "qmltestrunner");
 const ui = ["Panel", "PanelController", "BarIconButton", "WidgetButton", "OpticalGlyph",
-  "Button", "TextField", "PanelHero", "PanelSeparator", "PanelSectionHeader", "BorderSurface", "BorderOverlay"];
+  "Button", "TextField", "ToggleSwitch", "PanelHero", "PanelSeparator", "PanelSectionHeader", "BorderSurface", "BorderOverlay"];
 const commons = ["Style.qml", "Util.qml", "Border.qml", "BorderGeometry.js"];
 const missing = [...ui.map(n => path.join(shell, "Ui", n + ".qml")), ...commons.map(n => path.join(shell, "Commons", n))].filter(p => !fs.existsSync(p));
 for (const command of [qmlRunner, "quickshell", "python3"]) {
@@ -28,7 +28,7 @@ try {
     QT_QPA_PLATFORMTHEME: "", QT_QUICK_CONTROLS_STYLE: "Basic", WAYLAND_DISPLAY: undefined, DISPLAY: undefined,
     XDG_RUNTIME_DIR: path.join(temp, "runtime"), XDG_CACHE_HOME: path.join(temp, "cache") };
   fs.cpSync(__dirname, path.join(temp, "tests/qml"), { recursive: true });
-  for (const name of ["Panel.qml", "Service.qml", "Model.js"]) fs.copyFileSync(path.join(root, name), path.join(temp, name));
+  for (const name of ["Panel.qml", "Service.qml", "Model.js", "ThemeIcon.qml"]) fs.copyFileSync(path.join(root, name), path.join(temp, name));
   const imports = path.join(temp, "tests/qml/imports");
   for (const name of ui) fs.copyFileSync(path.join(shell, "Ui", name + ".qml"), path.join(imports, "qs/Ui", name + ".qml"));
   fs.writeFileSync(path.join(imports, "qs/Ui/qmldir"), "module qs.Ui\n" + [...ui, "KeyboardPanel"].map(n => `${n} 1.0 ${n}.qml\n`).join(""));

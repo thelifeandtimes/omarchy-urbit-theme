@@ -91,9 +91,13 @@ deadline. Pause/remove may wait up to 50 seconds for the account lock and have
 a 100-second overall deadline, below QML's 120-second watchdog. Status, preview,
 and login still fail promptly on a busy lock; login secrets are never deferred.
 
-Panel has palette, desktop sync, and ships sections. `+ urbit` reveals a
+Panel has a Network Theme hero, a compact palette strip, and ship rows with
+labeled desktop-sync switches. Only the selected, unpaused, syncing hub has its
+switch on. Turning on a paused destination also enables that ship before
+following it. The ten-swatch preview omits muted; publication still carries all
+eleven colors. `+ urbit`, inline with the Ships heading, reveals a
 temporary URL/+code form under ships, with Add & Sync and Cancel. Rows display
-@p, URL on hover only, X remove, and inverse sync/pause action. No separate
+@p, URL on hover only, × remove, and inverse sync/pause action. No separate
 global consent or account section. Explain hub adoption, full desktop appearance,
 shared Talon appearance and accent override in the add form. Clear passwords on submission, cancel, close, and
 destruction. Errors and cleanup warnings belong inline with the ship section.

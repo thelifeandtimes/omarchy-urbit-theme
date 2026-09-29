@@ -13,13 +13,40 @@ Ui.Panel {
     ? bar.shell.serviceFor(moduleName) : null
   readonly property var account: service ? service.account : Model.emptyState()
   readonly property var currentPalette: service ? service.currentPalette : null
+  readonly property var desktop: service && service.desktopState ? service.desktopState
+    : ({ status: "", error: "", hub: null, paused: false, theme: "" })
   readonly property bool ready: !!service && service.loaded
   readonly property color foreground: Color.foreground
+  readonly property color dim: Qt.darker(foreground, 1.4)
+  readonly property bool hasError: !!(desktop.error || (service && service.lastError))
+  readonly property int controlSize: Style.space(28)
+  readonly property var previewColors: ["primary", "secondary", "tertiary", "background", "surface", "text", "raised", "error", "selection", "link"]
   property bool adding: false
   property string formError: ""
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
+  function isHub(row) { return Model.sameAccount(desktop.hub, row) }
+  function followsDesktop(row) {
+    return !!service && service.desktopEnabled && isHub(row) && !desktop.paused && Model.canAuto(row)
+  }
+  function toggleDesktop(row) {
+    if (!ready || !service.desktopEnabled || row.authenticationRequired || service.rowBusy(row)) return
+    if (followsDesktop(row)) service.desktopCommand({ action: "pause" })
+    else {
+      if (!row.automatic) service.control("enable", row)
+      service.desktopCommand(isHub(row) ? { action: "resume" } : { action: "hub", id: row.id })
+    }
+  }
+  function shipDetail(row) {
+    var status = service ? service.rowStatus(row) : ""
+    if (!service || !service.desktopEnabled || !isHub(row)) return status
+    if (desktop.error) return desktop.error
+    if (status) return status
+    if (desktop.paused) return "Desktop sync paused"
+    if (!row.automatic) return "Ship sync paused"
+    return desktop.status === "Following shared appearance" ? "Desktops synced" : desktop.status
+  }
   function clearSecret() {
     // Assignment also resets Qt's undo history.
     if (codeField) codeField.text = ""
@@ -67,9 +94,11 @@ Ui.Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "~"
-    active: root.opened || root.account.ships.some(function(row) { return Model.canAuto(row) })
-    tooltipText: "Urbit Theme: " + (root.service ? root.service.statusText : "Loading")
+    active: root.opened || root.hasError
+    tooltipText: "Network Theme: " + (root.currentPalette ? root.currentPalette.name : "Loading")
+    iconComponent: Component {
+      ThemeIcon { ink: root.hasError ? Color.urgent : button.foreground }
+    }
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton || buttonCode === Qt.MiddleButton) {
         if (root.service) root.service.refresh()
@@ -99,95 +128,88 @@ Ui.Panel {
         Controls.ScrollBar.vertical: Controls.ScrollBar { policy: Controls.ScrollBar.AsNeeded }
         Column {
           id: content
+          objectName: "panelContent"
           width: flick.width
-          spacing: Style.space(12)
-          Ui.PanelSectionHeader { objectName: "paletteSection"; text: "OMARCHY PALETTE" }
-          Body {
-            text: root.currentPalette ? root.currentPalette.name + (root.currentPalette.dark ? " / dark" : " / light")
-              : "Palette preview is unavailable."
+          spacing: Style.space(8)
+          Ui.PanelHero {
+            objectName: "paletteSection"
+            title: "Network Theme"
+            meta: root.currentPalette ? root.currentPalette.name.replace(/-/g, " ") : "Ship-backed desktop appearance"
+            detail: root.currentPalette ? (root.currentPalette.dark ? "DARK" : "LIGHT") : ""
+            iconComponent: Component {
+              ThemeIcon {
+                size: Style.space(36)
+                ink: root.hasError ? Color.urgent : root.foreground
+                colored: true
+                palette: root.currentPalette
+              }
+            }
+            trailingControl: Component {
+              IconAction {
+                objectName: "refresh"
+                glyph: "refresh"
+                bordered: false
+                enabled: !!root.service
+                tooltipText: "Refresh palette and ship status"
+                onClicked: if (root.service) root.service.refresh()
+              }
+            }
           }
-          Flow {
+          RowLayout {
+            objectName: "paletteStrip"
             width: parent.width
-            spacing: Style.space(6)
+            spacing: Style.space(4)
             visible: !!root.currentPalette
             Repeater {
-              model: ["primary", "secondary", "tertiary", "background", "surface", "text", "muted", "raised", "error", "selection", "link"]
-              ColumnLayout {
+              model: root.previewColors
+              Rectangle {
                 required property string modelData
-                width: (content.width - Style.space(24)) / 5
-                Rectangle {
-                  Layout.fillWidth: true
-                  height: Style.space(30)
-                  color: root.currentPalette && root.currentPalette[modelData] ? root.currentPalette[modelData] : "transparent"
-                  border.width: 1
-                  border.color: root.foreground
-                  radius: Style.cornerRadius
-                }
-                Text {
-                  Layout.fillWidth: true
-                  text: modelData
-                  textFormat: Text.PlainText
-                  color: root.foreground
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
-                }
+                objectName: "swatch-" + modelData
+                Layout.fillWidth: true
+                Layout.minimumWidth: 1
+                Layout.preferredHeight: Style.space(18)
+                color: root.currentPalette && root.currentPalette[modelData] ? root.currentPalette[modelData] : "transparent"
+                border.width: 1
+                border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.22)
+                radius: Math.min(Style.cornerRadius, height / 4)
+                readonly property string description: modelData + " · " + (root.currentPalette && root.currentPalette[modelData] ? root.currentPalette[modelData] : "Auto")
+                Accessible.name: description
+                HoverHandler { id: swatchHover }
+                Controls.ToolTip { visible: swatchHover.hovered; text: parent.description; delay: 250 }
               }
             }
-          }
-          Action {
-            objectName: "refresh"
-            text: "Refresh Preview"
-            enabled: !!root.service
-            tooltipText: "Refresh palette and ship status without publishing"
-            onClicked: if (root.service) root.service.refresh()
           }
           Ui.PanelSeparator { width: parent.width }
-          Column {
+          RowLayout {
+            objectName: "shipsHeader"
             width: parent.width
-            spacing: Style.space(8)
-            visible: !!root.service && root.service.desktopEnabled
-            Ui.PanelSectionHeader { text: "DESKTOP SYNC" }
-            Body {
-              text: root.service ? root.service.desktopState.status
-                + (root.service.desktopState.hub ? " · " + root.service.desktopState.hub.ship : "")
-                + (root.service.desktopState.theme ? " · " + root.service.desktopState.theme : "") : ""
+            Ui.PanelSectionHeader { objectName: "shipsSection"; Layout.fillWidth: true; text: "SHIPS" }
+            Action {
+              objectName: "addUrbit"
+              text: "+ urbit"
+              fontSize: Style.font.caption
+              horizontalPadding: Style.space(7)
+              verticalPadding: Style.space(3)
+              visible: !root.adding
+              enabled: root.ready && root.account.ships.length < 64
+              onClicked: { root.adding = true; urlField.forceActiveFocus() }
             }
-            Body {
-              text: root.service ? root.service.desktopState.error : ""
-              visible: text !== ""
-              color: Color.urgent
-            }
-            Flow {
-              width: parent.width
-              spacing: Style.space(8)
-              Action {
-                text: root.service && root.service.desktopState.paused ? "Resume desktop sync" : "Pause desktop sync"
-                enabled: !!root.service && !!root.service.desktopState.hub
-                onClicked: root.service.desktopCommand({ action: root.service.desktopState.paused ? "resume" : "pause" })
-              }
-              Action { text: "Retry"; onClicked: if (root.service) root.service.desktopCommand({ action: "retry" }) }
-            }
-            Body {
-              font.pixelSize: Style.font.caption
-              text: "The hub owns the shared appearance: colors, font, corners, spacing, borders and effects. Joining adopts its profile; an empty hub starts with this desktop."
-            }
-            Ui.PanelSeparator { width: parent.width }
           }
-          Ui.PanelSectionHeader { objectName: "shipsSection"; text: "SHIPS" }
-          Body { visible: root.ready && !root.account.ships.length; text: "No ships added." }
+          Body { visible: root.ready && !root.account.ships.length; text: "Add a ship to share your desktop appearance."; color: root.dim }
           Repeater {
             model: root.account.ships
             Column {
               id: shipRow
               required property var modelData
               width: content.width
-              spacing: Style.space(4)
+              spacing: Style.space(2)
               RowLayout {
                 width: parent.width
+                spacing: Style.space(6)
                 Text {
                   objectName: "shipName-" + shipRow.modelData.id
                   Layout.fillWidth: true
+                  Layout.minimumWidth: 0
                   text: shipRow.modelData.ship
                   textFormat: Text.PlainText
                   color: root.foreground
@@ -203,46 +225,83 @@ Ui.Panel {
                   }
                   Accessible.name: text
                 }
-                Action {
-                  text: root.service && root.service.desktopState.hub && root.service.desktopState.hub.id === shipRow.modelData.id ? "●" : "H"
+                Text {
                   visible: !!root.service && root.service.desktopEnabled
-                  implicitWidth: Style.space(36)
-                  tooltipText: "Use " + shipRow.modelData.ship + " as this machine's desktop sync hub"
-                  onClicked: root.service.desktopCommand({ action: "hub", id: shipRow.modelData.id })
+                  text: "Sync desktops"
+                  textFormat: Text.PlainText
+                  color: root.followsDesktop(shipRow.modelData) ? root.foreground : root.dim
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
                 }
-                Action {
-                  id: syncButton
+                Ui.ToggleSwitch {
+                  objectName: "desktop-" + shipRow.modelData.id
+                  visible: !!root.service && root.service.desktopEnabled
+                  Layout.preferredWidth: root.controlSize
+                  Layout.preferredHeight: root.controlSize
+                  trackHeight: Style.space(14)
+                  trackWidth: Style.space(26)
+                  cursorPad: Style.space(1)
+                  checked: root.followsDesktop(shipRow.modelData)
+                  enabled: root.ready && !shipRow.modelData.authenticationRequired && !root.service.rowBusy(shipRow.modelData)
+                  activeFocusOnTab: true
+                  hasCursor: activeFocus
+                  property string tooltipText: "Sync this computer's theme, font and effects through " + shipRow.modelData.ship + ". Only one ship can be selected."
+                  Accessible.role: Accessible.CheckBox
+                  Accessible.name: "Sync desktops through " + shipRow.modelData.ship
+                  Accessible.checked: checked
+                  Accessible.onToggleAction: if (enabled) toggled()
+                  Keys.onSpacePressed: if (enabled) toggled()
+                  Keys.onReturnPressed: if (enabled) toggled()
+                  onToggled: root.toggleDesktop(shipRow.modelData)
+                  onActiveFocusChanged: if (activeFocus) root.reveal(this)
+                  Controls.ToolTip { visible: parent.containsMouse; text: parent.tooltipText; delay: 400 }
+                }
+                IconAction {
                   objectName: "automatic-" + shipRow.modelData.id
                   text: Model.toggleIcon(shipRow.modelData)
-                  implicitWidth: Style.space(36)
-                  implicitHeight: Style.space(36)
                   tooltipText: Model.toggleLabel(shipRow.modelData) + " for " + shipRow.modelData.ship
-                  Accessible.name: tooltipText
+                    + ". Includes Talon colors and desktop sync when this ship is selected."
                   enabled: root.ready && !root.service.rowBusy(shipRow.modelData) && !shipRow.modelData.authenticationRequired
                   onClicked: root.service.control(shipRow.modelData.automatic ? "pause" : "enable", shipRow.modelData)
                   Row {
                     objectName: "pauseBars-" + shipRow.modelData.id
                     anchors.centerIn: parent
-                    spacing: Style.space(4)
+                    spacing: Style.space(3)
                     visible: shipRow.modelData.automatic
-                    Rectangle { width: Style.space(3); height: Style.space(13); color: root.foreground }
-                    Rectangle { width: Style.space(3); height: Style.space(13); color: root.foreground }
+                    Rectangle { width: Style.space(2); height: Style.space(10); color: root.foreground }
+                    Rectangle { width: Style.space(2); height: Style.space(10); color: root.foreground }
                   }
                 }
-                Action {
+                IconAction {
                   objectName: "disconnect-" + shipRow.modelData.id
-                  text: "X"
+                  text: "×"
                   tooltipText: "Remove " + shipRow.modelData.ship + ": log out and forget this ship"
-                  Accessible.name: tooltipText
                   enabled: root.ready && !root.service.rowBusy(shipRow.modelData)
                   onClicked: root.service.control("disconnect", shipRow.modelData)
                 }
               }
-              Body {
-                objectName: "shipStatus-" + shipRow.modelData.id
-                text: root.service ? root.service.rowStatus(shipRow.modelData) : ""
-                visible: text !== ""
-                font.pixelSize: Style.font.caption
+              RowLayout {
+                width: parent.width
+                visible: shipDetail.text !== "" || retryShip.visible
+                Text {
+                  id: shipDetail
+                  objectName: "shipStatus-" + shipRow.modelData.id
+                  Layout.fillWidth: true
+                  text: root.shipDetail(shipRow.modelData)
+                  textFormat: Text.PlainText
+                  wrapMode: Text.WordWrap
+                  color: root.isHub(shipRow.modelData) && root.desktop.error ? Color.urgent : root.dim
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                }
+                IconAction {
+                  id: retryShip
+                  objectName: "retry-" + shipRow.modelData.id
+                  visible: root.isHub(shipRow.modelData) && (root.desktop.error !== "" || root.desktop.status === "Reconnecting")
+                  glyph: "refresh"
+                  tooltipText: "Retry desktop sync"
+                  onClicked: root.service.desktopCommand({ action: "retry" })
+                }
               }
             }
           }
@@ -250,20 +309,14 @@ Ui.Panel {
             visible: text !== ""
             color: Color.urgent
             text: root.formError || (root.service ? root.service.lastError : "")
-          }
-          Action {
-            objectName: "addUrbit"
-            text: "+ urbit"
-            visible: !root.adding
-            enabled: root.ready && root.account.ships.length < 64
-            onClicked: { root.adding = true; urlField.forceActiveFocus() }
+              || (!root.account.ships.some(root.isHub) ? root.desktop.error : "")
           }
           Column {
             width: parent.width
             spacing: Style.space(8)
             visible: root.adding
             onVisibleChanged: if (!visible) root.clearSecret()
-            Body { text: "Add & Sync joins the first ship's shared desktop appearance (or creates it if empty), including font and effects. It also publishes the shared colors to Talon and disables Talon's separate accent override. Additional ships receive those Talon colors; H selects the desktop hub." }
+            Body { text: "The first ship shares this desktop's colors, font and effects—or adopts its existing profile. All added ships receive Talon colors, replacing Talon's accent override." }
             Body { text: "Ship URL" }
             Ui.TextField {
               id: urlField
@@ -309,11 +362,6 @@ Ui.Panel {
               Action { objectName: "cancelLogin"; text: "Cancel"; onClicked: root.cancelLogin() }
             }
           }
-          Body {
-            visible: root.account.ships.length > 0
-            font.pixelSize: Style.font.caption
-            text: "Pause then resume to resend the palette. Removing a ship logs out and forgets its session; published Talon settings stay unchanged. A running operation finishes first."
-          }
         }
       }
     }
@@ -329,7 +377,49 @@ Ui.Panel {
   component Action: Ui.Button {
     focusable: true
     bordered: true
+    Accessible.name: tooltipText || text
     opacity: enabled ? 1 : 0.45
     onActiveFocusChanged: if (activeFocus) root.reveal(this)
+  }
+  component IconAction: Action {
+    id: iconAction
+    property string glyph: ""
+    implicitWidth: root.controlSize
+    implicitHeight: root.controlSize
+    Layout.preferredWidth: root.controlSize
+    Layout.preferredHeight: root.controlSize
+    horizontalPadding: 0
+    verticalPadding: 0
+    fontSize: Style.font.title
+    Canvas {
+      anchors.centerIn: parent
+      width: Style.space(14)
+      height: width
+      visible: iconAction.glyph === "refresh"
+      property color ink: iconAction.foreground
+      antialiasing: true
+      onInkChanged: requestPaint()
+      onWidthChanged: requestPaint()
+      onPaint: {
+        var ctx = getContext("2d")
+        ctx.reset()
+        ctx.clearRect(0, 0, width, height)
+        ctx.scale(width / 24, height / 24)
+        ctx.strokeStyle = ink
+        ctx.lineWidth = 1.8
+        ctx.lineCap = "round"
+        ctx.lineJoin = "round"
+        ctx.beginPath()
+        ctx.moveTo(4, 11)
+        ctx.bezierCurveTo(4, 6, 8, 3, 12, 3)
+        ctx.bezierCurveTo(16, 3, 19, 5, 21, 8)
+        ctx.moveTo(21, 3); ctx.lineTo(21, 8); ctx.lineTo(16, 8)
+        ctx.moveTo(20, 13)
+        ctx.bezierCurveTo(20, 18, 16, 21, 12, 21)
+        ctx.bezierCurveTo(8, 21, 5, 19, 3, 16)
+        ctx.moveTo(3, 21); ctx.lineTo(3, 16); ctx.lineTo(8, 16)
+        ctx.stroke()
+      }
+    }
   }
 }

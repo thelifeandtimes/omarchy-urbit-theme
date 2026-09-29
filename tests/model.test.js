@@ -209,11 +209,11 @@ test("auth failures stop only that row, null state remains usable, and no error 
   assert.equal(q.status, true);
 });
 
-test("inverse toggle has action labels and a circular sync glyph; paths and URLs are bounded", () => {
+test("inverse toggle has action labels and a play glyph; paths and URLs are bounded", () => {
   assert.equal(M.toggleLabel(a), "Pause automatic syncing");
   assert.equal(M.toggleIcon(a), "");
   assert.equal(M.toggleLabel({ ...a, automatic: false }), "Resume automatic syncing");
-  assert.equal(M.toggleIcon({ ...a, automatic: false }), "\u21bb");
+  assert.equal(M.toggleIcon({ ...a, automatic: false }), "\u25b6");
   assert.equal(M.localPath("file:///tmp/a%20b/client/main.py"), "/tmp/a b/client/main.py");
   for (const p of ["https://host/file", "file://host/file", "file:///tmp/%00", "file:///tmp/%xx"])
     assert.equal(M.localPath(p), "");

@@ -18,7 +18,8 @@ OLD_FILES = (
     "LICENSE", "CONTRACT.md", "client/main.py", "client/support.py", "client/eyre.py",
 )
 PROFILE_FILES = OLD_FILES + ("PROFILE.md", "client/profile.py", "client/sync.py")
-FILES = PROFILE_FILES + ("client/native.py",)
+NATIVE_FILES = PROFILE_FILES + ("client/native.py",)
+FILES = NATIVE_FILES + ("ThemeIcon.qml",)
 HOOK = "omarchy-urbit-theme"
 FONT_HOOK = "omarchy-urbit-font"
 SOURCE = Path(__file__).resolve().parents[1]
@@ -55,7 +56,7 @@ def inspect(target, hook):
     receipt = json.loads(regular(target / MARKER))
     if (receipt.get("id") != ID or receipt.get("version") != 1
             or not isinstance(receipt.get("files"), dict)
-            or set(receipt["files"]) not in (set(FILES), set(PROFILE_FILES), set(OLD_FILES))):
+            or set(receipt["files"]) not in (set(FILES), set(NATIVE_FILES), set(PROFILE_FILES), set(OLD_FILES))):
         raise RuntimeError("The existing installation has no recognized ownership receipt.")
     found = set()
     for path in target.rglob("*"):

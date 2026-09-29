@@ -113,7 +113,7 @@ function sameAccount(a, b) { return !!a && !!b && a.id === b.id && a.url === b.u
 function account(state, expected) { return state.ships.filter(function(s) { return sameAccount(s, expected); })[0]; }
 function canAuto(row) { return !!row && row.automatic && !row.authenticationRequired; }
 function toggleLabel(row) { return row.automatic ? "Pause automatic syncing" : "Resume automatic syncing"; }
-function toggleIcon(row) { return row.automatic ? "" : "\u21bb"; }
+function toggleIcon(row) { return row.automatic ? "" : "\u25b6"; }
 function initialQueue() {
   return { running: "", run: null, controls: [], jobs: [], targets: [], status: true, preview: true,
     fanout: true, knownState: false, statusDue: 0, statusAttempts: 0, previewDue: 0, previewAttempts: 0,

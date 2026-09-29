@@ -1,4 +1,4 @@
-# Omarchy Urbit Theme
+# Network Theme
 
 One ship-owned appearance profile for your Omarchy computers, with an
 eleven-color Talon bridge. Change appearance on one connected computer and the
@@ -63,7 +63,7 @@ confirmation and bar placement. For a noninteractive install, append `--yes`.
 The plugin registers its theme and font hooks automatically when first enabled;
 no separate setup script or manual hook commands are needed.
 
-Open the `~` widget and select **+ urbit**, enter the same ship URL and `+code`,
+Open the palette-and-tilde widget (**Network Theme**) and select **+ urbit**, enter the same ship URL and `+code`,
 then **Add & Sync**. The first connected ship is the desktop hub:
 
 - An **empty hub** starts with this computer's appearance.
@@ -92,8 +92,8 @@ python3 -B scripts/install.py install --enable
 
 Use the same steps on the second Omarchy machine with the same ship. Its old
 local theme is not uploaded on joining. No pairing code or device roster is
-needed. Additional ships receive the hub profile's Talon colors; **H** selects
-a different desktop hub explicitly.
+needed. Additional ships receive the hub profile's Talon colors. Select a
+different desktop hub by turning on that row's **Sync desktops** switch.
 
 The snapshot installer copies reviewed files to
 `~/.config/omarchy/plugins/thelifeandtimes.urbit-theme/`, installs uniquely named
@@ -115,7 +115,7 @@ python3 -B scripts/install.py install --replace --enable --restart-shell
 ```
 
 Existing account IDs, sessions, and per-ship preferences are retained. Unmodified
-0.2 and 0.3.0 snapshot inventories are recognized. The first existing
+0.2 and earlier 0.3 snapshot inventories are recognized. The first existing
 ship becomes the hub; if it is syncing and the namespace is empty, it seeds
 the profile from this desktop. A paused hub stays paused.
 
@@ -128,26 +128,29 @@ not update the running plugin.
 Build a self-contained source/install bundle (no credentials or local state):
 
 ```sh
-python3 -B scripts/package.py /path/to/omarchy-urbit-theme-0.3.2.tar.gz
+python3 -B scripts/package.py /path/to/omarchy-urbit-theme-0.3.3.tar.gz
 ```
 
 Copy it to the other machine, extract it, and run the install command above
-from its `omarchy-urbit-theme-0.3.2` directory. This works without publishing a
+from its `omarchy-urbit-theme-0.3.3` directory. This works without publishing a
 Git commit or installing any extra runtime dependencies.
 
 ## Controls and behavior
 
-The palette preview shows Talon's eleven mapped colors. Desktop Sync shows the
-hub, shared theme, connection/application status, and any missing prerequisite.
+The Network Theme hero shows the current theme and light/dark mode, with a
+custom palette-and-tilde icon whose paint colors follow the palette. Ten compact
+swatches fit on one line; hover for each role and hex value. Muted is hidden
+from the preview but remains part of the eleven-color Talon publication.
+Desktop sync and its status live directly on each ship row. **+ urbit** sits
+beside the Ships heading.
 
 | Control | Meaning |
 | --- | --- |
-| Pause/Resume desktop sync | Pause following and publication on this computer; resume adopts the hub |
-| Retry | Retry connection or application after resolving a missing theme/font |
-| H / filled dot on a ship | Select / identify the desktop hub |
-| Ship pause / circular arrow | Pause / resume that ship's Talon publishing; pausing the hub also stops desktop sync |
-| X | Remove the connection, best-effort log out the plugin's session, and forget its saved credential |
-| Refresh Preview | Refresh local palette and account status; does not create publication intent |
+| Sync desktops switch | Select that ship as the one desktop hub and adopt its profile; switch it off to pause desktop sync |
+| Retry arrow beside a ship error | Retry connection or application after resolving a missing theme/font |
+| Ship pause / play button | Pause / resume that ship's Talon publishing; pausing the hub also stops desktop sync |
+| × | Remove the connection, best-effort log out the plugin's session, and forget its saved credential |
+| Refresh arrow in the title | Refresh local palette and account status; does not create publication intent |
 
 Theme/font hooks and local appearance observation detect deliberate changes.
 The latest unsent local change replaces older queued work. A live Eyre
