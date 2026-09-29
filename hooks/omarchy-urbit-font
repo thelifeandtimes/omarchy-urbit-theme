@@ -1,0 +1,5 @@
+#!/bin/bash
+# Survives the shell restart performed by `omarchy font set`.
+[[ ${OMARCHY_URBIT_THEME_REMOTE:-} == 1 ]] && exit 0
+helper="$HOME/.config/omarchy/plugins/thelifeandtimes.urbit-theme/client/sync.py"
+[[ -f $helper ]] && timeout 2 python3 -B "$helper" notify font "$1" >/dev/null 2>&1 || true

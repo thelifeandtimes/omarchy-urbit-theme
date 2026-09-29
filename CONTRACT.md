@@ -52,9 +52,13 @@ empty), `lastTheme`, and `lastError` (safe text). No single active account exist
 An empty list is valid. Limit to 64 rows and bound response output accordingly.
 Authentication failures pause that row; all other rows remain unaffected.
 
-Palette is the existing Talon CustomTheme object: stable
+Palette is the Talon CustomTheme object: stable
 `id:"omarchy-urbit-theme"`, name, dark, and six-digit RGB primary, secondary,
-tertiary, background, and surface. Do not change Talon's ship schema.
+tertiary, background, and surface. Version 0.3 additionally emits all six rc74
+extras: `text`, `muted`, `raised`, `error`, `selection`, `link`. Each is six-digit
+RGB or `""` for Auto. The validator still accepts a legacy five-color input;
+the live bridge always supplies the complete eleven-color mapping. This is an
+additive protocol-v2 extension; the installed panel/helper update together.
 
 ## Persistence And Migration
 
@@ -69,22 +73,34 @@ in memory for observations and persists on the next mutation; never read or
 rewrite credentials just to migrate. No runtime protocol-v1 compatibility is
 needed: the panel and helper are installed as one snapshot.
 
-## Queue And UI
+## Queue And UI (0.3)
 
-The QML service owns single-flight dispatch, coalescing, and per-ship retry
-budgets. Startup and a debounced `urbit-theme themeChanged` hook first preview
-once, then enqueue all syncing ships against that same palette. Refresh/status
-alone never publish. Each failed ship retries with bounded backoff without
-holding up ready work for other ships. Pause/remove cancel only their own queued
-syncs/retries and take priority after the current operation. An in-flight
-operation finishes first. Login secrets are never placed in a deferred queue.
+The QML service owns single-flight account controls and local observation.
+In desktop mode it disables the old direct palette fanout, so startup/login
+cannot publish a stale local palette before adopting the hub. The plugin-owned
+`client/sync.py serve` process owns shared-profile coordination and a separate
+bounded Talon bridge lane. Its stdin is newline-delimited nonsecret commands:
+`changed`, `retry`, `pause`, `resume`, or `hub` with a connection `id`. Stdout is
+newline-delimited status objects containing `status`, `error`, `hub`, `paused`,
+`theme`, `bridgeErrors`, and `bridgeBusy`. It never emits credentials or raw
+network errors. EOF stops the process. QML restarts a failed worker.
 
-Panel has exactly two normal sections: palette and ships. `+ urbit` reveals a
+The bridge invokes the existing bounded `sync` helper with the canonical hub
+palette and exact destination identity. Sync actions retain their 45-second
+deadline. Pause/remove may wait up to 50 seconds for the account lock and have
+a 100-second overall deadline, below QML's 120-second watchdog. Status, preview,
+and login still fail promptly on a busy lock; login secrets are never deferred.
+
+Panel has palette, desktop sync, and ships sections. `+ urbit` reveals a
 temporary URL/+code form under ships, with Add & Sync and Cancel. Rows display
 @p, URL on hover only, X remove, and inverse sync/pause action. No separate
-global consent or account section. Explain shared Talon appearance and accent
-override in the add form. Clear passwords on submission, cancel, close, and
+global consent or account section. Explain hub adoption, full desktop appearance,
+shared Talon appearance and accent override in the add form. Clear passwords on submission, cancel, close, and
 destruction. Errors and cleanup warnings belong inline with the ship section.
+
+See [PROFILE.md](PROFILE.md) for the independent superset schema in
+`omarchy-urbit-theme/appearance/current`, persistent desktop state, subscription
+lifecycle, last-arrival ordering, and application recovery.
 
 ## Publication Guarantees
 

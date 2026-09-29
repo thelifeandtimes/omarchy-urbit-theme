@@ -90,6 +90,11 @@ function parseResponse(raw, exitCode) {
         if (typeof p[key] !== "string" || !/^#[0-9a-fA-F]{6}$/.test(p[key])) throw 0;
         palette[key] = p[key];
       });
+      ["text", "muted", "raised", "error", "selection", "link"].forEach(function(key) {
+        if (p[key] === undefined) return;
+        if (typeof p[key] !== "string" || (p[key] !== "" && !/^#[0-9a-fA-F]{6}$/.test(p[key]))) throw 0;
+        palette[key] = p[key];
+      });
     }
     function notice(n) {
       if (!object(n) || !text(n.code, 64) || !/^[a-z][a-z0-9_-]*$/.test(n.code)

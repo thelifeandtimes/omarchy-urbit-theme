@@ -4,6 +4,8 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import sys
+import tarfile
 import tempfile
 import unittest
 
@@ -22,6 +24,7 @@ class InstallTest(unittest.TestCase):
         self.target, self.hook = installer.paths(self.home)
         self.calls = []
         self.fail_hook = False
+        self.fail_font = False
 
     def run_command(self, argv):
         self.calls.append(argv)
@@ -31,6 +34,13 @@ class InstallTest(unittest.TestCase):
             self.hook.parent.mkdir(parents=True, exist_ok=True)
             self.hook.write_bytes(Path(argv[4]).read_bytes())
             self.hook.chmod(0o755)
+        elif argv[:4] == ["omarchy", "hook", "install", "font-set"]:
+            if self.fail_font:
+                raise subprocess.CalledProcessError(1, argv)
+            target = self.hook.parent.parent / "font-set.d" / installer.FONT_HOOK
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(Path(argv[4]).read_bytes())
+            target.chmod(0o755)
 
     def install(self, **kwargs):
         with contextlib.redirect_stdout(io.StringIO()):
@@ -40,7 +50,7 @@ class InstallTest(unittest.TestCase):
         self.install()
         self.assertEqual(installer.inspect(self.target, self.hook)["id"], installer.ID)
         self.assertEqual(self.hook.read_bytes(), (ROOT / "hooks" / installer.HOOK).read_bytes())
-        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(len(self.calls), 3)
         self.assertFalse((self.home / ".local/state/omarchy-urbit-theme").exists())
         self.assertFalse((self.target / ".git").exists())
         for name in installer.FILES:
@@ -55,7 +65,9 @@ class InstallTest(unittest.TestCase):
 
     def test_shell_restart_is_explicit(self):
         self.install(enable=True, restart_shell=True)
-        self.assertEqual(self.calls[-1], ["omarchy", "restart", "shell"])
+        self.assertEqual(self.calls[-2], ["omarchy", "restart", "shell"])
+        self.assertEqual(self.calls[-1], ["omarchy", "plugin", "enable", installer.ID, "--section", "right"])
+        self.assertNotIn(["omarchy-shell", "shell", "rescanPlugins"], self.calls)
 
     def test_unrelated_hook_and_shell_config_survive(self):
         self.hook.parent.mkdir(parents=True)
@@ -125,6 +137,52 @@ class InstallTest(unittest.TestCase):
             self.install()
         self.assertFalse(self.target.exists())
         self.assertFalse(self.hook.exists())
+
+    def test_font_hook_failure_restores_both_hooks_and_snapshot(self):
+        self.install()
+        before = (self.target / installer.MARKER).read_bytes()
+        font = self.hook.parent.parent / "font-set.d" / installer.FONT_HOOK
+        old_font = font.read_bytes()
+        self.fail_font = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.install(replace=True)
+        self.assertEqual((self.target / installer.MARKER).read_bytes(), before)
+        self.assertEqual(font.read_bytes(), old_font)
+        installer.inspect(self.target, self.hook)
+
+    def test_upgrade_from_original_snapshot_inventory(self):
+        self.install()
+        receipt_path = self.target / installer.MARKER
+        receipt = json.loads(receipt_path.read_text())
+        for name in set(installer.FILES) - set(installer.OLD_FILES):
+            (self.target / name).unlink()
+            del receipt["files"][name]
+        del receipt["fontHook"]
+        (self.hook.parent.parent / "font-set.d" / installer.FONT_HOOK).unlink()
+        receipt_path.write_text(json.dumps(receipt))
+        self.install(replace=True)
+        self.assertEqual(set(installer.inspect(self.target, self.hook)["files"]), set(installer.FILES))
+
+    def test_bundle_is_complete_and_contains_no_runtime_state(self):
+        bundle = self.home / "release.tar.gz"
+        result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/package.py"), str(bundle)],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with tarfile.open(bundle) as archive:
+            names = {name.split("/", 1)[1] for name in archive.getnames()}
+        self.assertEqual(names, set(installer.FILES) | {"hooks/omarchy-urbit-theme", "hooks/omarchy-urbit-font",
+                                                      "scripts/install.py", "scripts/check-desktop.py", "scripts/package.py"})
+
+    def test_upgrade_from_030_profile_snapshot_inventory(self):
+        self.install()
+        receipt_path = self.target / installer.MARKER
+        receipt = json.loads(receipt_path.read_text())
+        (self.target / "client/native.py").unlink()
+        del receipt["files"]["client/native.py"]
+        receipt_path.write_text(json.dumps(receipt))
+        installer.inspect(self.target, self.hook)
+        self.install(replace=True)
+        self.assertTrue((self.target / "client/native.py").is_file())
 
 
 if __name__ == "__main__":

@@ -1,232 +1,224 @@
 # Omarchy Urbit Theme
 
-Sync Omarchy's palette to multiple Urbit ships. Existing Talon clients on
-desktop, Android, and iOS receive it through their normal `%settings` sync.
-No Talon code changes or new Gall agent are required, and Talon Desktop does
+One ship-owned appearance profile for your Omarchy computers, with an
+eleven-color Talon bridge. Change appearance on one connected computer and the
+others follow. Install on another computer, add the same ship, and it adopts
+the existing profile before publishing anything.
+
+The plugin uses the ship's existing `%settings` agent. No additional Gall
+agent, server, daemon installation, or Python package is required. Talon does
 not need to run on the publishing computer.
 
-The widget has two sections: **current theme colors** and **ships**. Each ship
-has its own session, sync/pause preference, retry state, and removal control.
+## What syncs
 
-This is an independent prototype, not an official Omarchy or Tlon plugin.
-Localhost publication and missed-event recovery were verified with Talon
-Desktop 1.7.8. Multi-ship isolation is covered by fake-server tests; mobile and
-clean-machine acceptance remain release gates.
-After the 0.2.0 upgrade, the operator also confirmed live syncing resumed when
-the development ship was rebooted. This is single-ship acceptance, not evidence
-of a live multi-ship or mobile rollout.
+- The installed Omarchy theme selection and full resolved palette.
+- The monospace font family used by Omarchy's shell and terminals.
+- Theme typography, shell spacing, bar dimensions, control states, and surface
+  colors, opacity and borders.
+- Window corners, border widths/gradients, inner/outer gaps, opacity/dimming,
+  blur, shadow/glow options, and groupbar appearance.
+- Configured animation curves and rules.
+- Supported declarative application theme files (btop, Chromium, Helix, icons,
+  keyboard RGB, Obsidian, VS Code colors, and AI-terminal theme data).
+
+The profile is one superset in one namespace. Consumers can use whichever
+fields they support. [PROFILE.md](PROFILE.md) specifies every field and the
+capture/application contract.
+
+Fonts, wallpapers and icon assets must already be installed. A missing named
+theme or font is reported in the panel; the desired profile remains available
+for Retry after installation. Wallpaper selection follows the installed theme;
+image files are not uploaded. Executable theme code comes only from the
+installed local theme, subject to Omarchy's Git-theme restrictions. Display
+scaling and machine-level `~/.config/omarchy/shell.toml` overrides, including
+text zoom, remain local.
+
+Talon rc74+ receives primary, secondary, tertiary, background, surface, text,
+muted, raised, error, selection and link colors. Talon currently defines its
+fonts and shapes in application code; those additional profile fields are
+available to future consumers but do not alter unchanged Talon clients.
 
 ## Requirements
 
-- Omarchy 4.x with its Quickshell plugin API, `omarchy theme color`, and hooks.
+- Omarchy 4.x with its Lua-based Hyprland configuration, Quickshell plugin API,
+  `omarchy theme color`, and hooks. Developed against Omarchy 4.0.4.
 - Python 3.11+ (standard library only).
-- `secret-tool` (libsecret) and an available, unlocked Secret Service provider.
-- Ship URLs and their `+code`. Use HTTPS origins; HTTP is accepted only for
-  literal localhost/loopback development origins. Reverse proxies must expose
-  Eyre at the origin root. Redirects and subpath URLs are not followed.
+- `secret-tool` and an available, unlocked Secret Service provider.
+- Ship URL and `+code`. HTTPS origins are supported; HTTP is permitted only for
+  literal localhost/loopback development origins. Eyre must be exposed at the
+  origin root; redirects and subpath URLs are not followed.
 
-There is no plaintext credential fallback. The helper does not access Talon's
-credentials, browser cookies, or arbitrary HTTP proxy environment variables.
-Omarchy plugins run as your user, not in a sandbox.
+This is an independent plugin, not an official Omarchy or Tlon product.
 
 ## Install
 
-From a reviewed checkout of this repository:
+On the other Omarchy machine, run:
+
+```sh
+omarchy plugin add https://github.com/thelifeandtimes/omarchy-urbit-theme.git --enable
+```
+
+`omarchy plugin install` is an alias for `omarchy plugin add`. Omarchy asks for
+confirmation and bar placement. For a noninteractive install, append `--yes`.
+The plugin registers its theme and font hooks automatically when first enabled;
+no separate setup script or manual hook commands are needed.
+
+Open the `~` widget and select **+ urbit**, enter the same ship URL and `+code`,
+then **Add & Sync**. The first connected ship is the desktop hub:
+
+- An **empty hub** starts with this computer's appearance.
+- An **existing hub** is adopted by this computer before it publishes anything.
+
+Use this command for subsequent native Git updates:
+
+```sh
+omarchy plugin update thelifeandtimes.urbit-theme
+```
+
+Hook setup is idempotent and preserves modified or conflicting hooks, reporting
+any conflict in the panel. Its ownership receipt is stored in local state, so
+the Git checkout stays clean for native updates. Hooks from an older native
+version are updated when the new coordinator starts. If an update retains an
+old QML instance, `omarchy restart shell` loads the new code.
+
+### Snapshot or bundle installation
+
+From a reviewed checkout or an extracted release bundle, the snapshot installer
+is also available:
 
 ```sh
 python3 -B scripts/install.py install --enable
 ```
 
-This copies a fixed snapshot to
-`~/.config/omarchy/plugins/thelifeandtimes.urbit-theme/`, installs the uniquely
-named `theme-set.d/omarchy-urbit-theme` hook using `omarchy hook install`, and
-enables the right-side bar widget. Omit `--enable` to install without enabling.
-It never edits `/usr/share/omarchy`, logs in, or grants sync consent.
+Use the same steps on the second Omarchy machine with the same ship. Its old
+local theme is not uploaded on joining. No pairing code or device roster is
+needed. Additional ships receive the hub profile's Talon colors; **H** selects
+a different desktop hub explicitly.
 
-To update an unmodified installer-managed snapshot:
+The snapshot installer copies reviewed files to
+`~/.config/omarchy/plugins/thelifeandtimes.urbit-theme/`, installs uniquely named
+`theme-set.d/omarchy-urbit-theme` and `font-set.d/omarchy-urbit-font` hooks, and
+enables the widget. It refuses unmanaged or modified installations and hook
+conflicts. It never edits `/usr/share/omarchy` or logs in for you.
+
+Do not apply the snapshot installer over a native Git checkout. On a machine
+with an existing snapshot, continue using the snapshot upgrade command below,
+or pause syncing, uninstall that snapshot, then use the native install command.
+Account state and credentials survive uninstall unless explicitly removed.
+
+### Upgrade an existing snapshot
+
+Let running account operations finish, then run:
 
 ```sh
 python3 -B scripts/install.py install --replace --enable --restart-shell
 ```
 
-Let running operations finish before updating. Existing syncing ships reconcile
-on service startup. Editing this repository does not change the installed
-snapshot. The installer refuses unmanaged installations, modified installed
-files, and conflicting hooks. A failed enable step leaves the snapshot
-installed; resolve the shell error, then rescan and enable it again.
+Existing account IDs, sessions, and per-ship preferences are retained. Unmodified
+0.2 and 0.3.0 snapshot inventories are recognized. The first existing
+ship becomes the hub; if it is syncing and the namespace is empty, it seeds
+the profile from this desktop. A paused hub stays paused.
 
-The root manifest also supports Omarchy's native Git installer. That installer
-does not install auxiliary hooks: explicitly install `hooks/omarchy-urbit-theme`
-with `omarchy hook install theme-set <path-to-hook>` afterward. Do not apply the
-snapshot installer over a native Git checkout.
+Restarting the shell loads the new QML and starts the profile coordinator. The
+repository is separate from the installed snapshot: editing the checkout does
+not update the running plugin.
 
-## Use
+### Move an unreleased snapshot to another computer
 
-1. Open the `~` widget. Its first section previews the active theme's colors.
-2. Select **+ urbit** under Ships to reveal the URL and masked `+code` form.
-3. Select **Add & Sync**. This explicitly enables shared Talon theme syncing for
-   that ship and schedules an initial publication.
-4. Add more ships the same way. Future theme changes fan out to every syncing
-   ship using the same resolved palette snapshot.
+Build a self-contained source/install bundle (no credentials or local state):
 
-Rows show only the ship's `@p`. Hover over the name to see its target URL.
+```sh
+python3 -B scripts/package.py /path/to/omarchy-urbit-theme-0.3.1.tar.gz
+```
+
+Copy it to the other machine, extract it, and run the install command above
+from its `omarchy-urbit-theme-0.3.1` directory. This works without publishing a
+Git commit or installing any extra runtime dependencies.
+
+## Controls and behavior
+
+The palette preview shows Talon's eleven mapped colors. Desktop Sync shows the
+hub, shared theme, connection/application status, and any missing prerequisite.
 
 | Control | Meaning |
 | --- | --- |
-| Pause icon | This ship is syncing. Click to pause it. |
-| Circular-arrow icon | This ship is paused. Click to resume and resend the current palette. |
-| X | Remove this ship, log out its plugin session, and forget its saved connection. |
+| Pause/Resume desktop sync | Pause following and publication on this computer; resume adopts the hub |
+| Retry | Retry connection or application after resolving a missing theme/font |
+| H / filled dot on a ship | Select / identify the desktop hub |
+| Ship pause / circular arrow | Pause / resume that ship's Talon publishing; pausing the hub also stops desktop sync |
+| X | Remove the connection, best-effort log out the plugin's session, and forget its saved credential |
+| Refresh Preview | Refresh local palette and account status; does not create publication intent |
 
-Pause and removal cancel only that ship's queued updates and retries. Other
-ships continue. A currently running operation finishes first; a slow or offline
-ship has bounded timeouts and cannot indefinitely prevent later ships from
-running. The add form never queues credentials while waiting for another
-operation: enter `+code` once the form is ready.
+Theme/font hooks and local appearance observation detect deliberate changes.
+The latest unsent local change replaces older queued work. A live Eyre
+subscription invalidates the hub snapshot and triggers a fresh read; startup
+and reconnect also reconcile. Normal online propagation is within seconds,
+plus the time Omarchy takes to apply a theme.
 
-**Adding or resuming changes shared Talon settings on that ship**, including
-disabling Talon's separate profile/custom accent override. Native Tlon Messenger
-and other ship apps use separate settings namespaces and are unaffected. There
-is no new per-device Talon override.
+**The last profile accepted by the ship wins.** There are no client-clock
+comparisons. An explicitly queued offline selection may become the latest
+selection when delivered on reconnect. A lost acknowledgement does not let a
+stale retry overwrite a subsequently accepted update. An ordinary startup does
+not promote the computer's stale local appearance.
 
-Paused ships retain their last published appearance. Removal also leaves ship
-theme settings intact; choose another theme in Talon to change them afterward.
-Expired authentication pauses only the affected row. Remove and add that ship
-again to renew its session.
+Remote application does not echo as a new user choice. The application is
+recorded before it starts so font-triggered shell restarts can recover. Talon
+publication has a separate bounded lane: an offline secondary ship cannot
+block desktop propagation. Account pause/removal waits for an in-flight
+account mutation to finish. Login credentials are never queued behind it.
 
-### Removal And Logout
+Adding/resuming a Talon destination selects the stable `omarchy-urbit-theme`
+theme and disables Talon's separate accent override, preserving unrelated
+saved themes. Talon edits do not control Omarchy. Passive unchanged-profile
+checks do not repeatedly override a later manual Talon theme selection.
+Theme and accent updates are separate, without compare-and-swap; concurrent
+Talon library edits can still race. Confirmation is ship storage, not proof
+that every desktop/mobile client has rendered the update.
 
-X makes a bounded, best-effort logout request using only the plugin's own Eyre
-session, then attempts to delete that origin's keyring entry. It never requests
-logout of all sessions, and it never reads or removes Talon's credentials.
+## Local files and credentials
 
-An offline ship, expired cookie, or missing keyring entry does not trap you in
-the list. The row is removed from local state first. If remote logout or keyring
-cleanup cannot be confirmed, an inline warning explains the limitation. A
-locked/unavailable keyring may still contain the session: unlock it and remove
-the **Omarchy Urbit Theme session** item for that origin using your keyring
-manager. The plugin does not retain a token to retry remote logout.
+`+code` is handed over on stdin and never saved. Only the plugin's origin-bound
+Eyre session is stored in Secret Service under application
+`omarchy-urbit-theme`. There is no plaintext credential fallback. Existing
+Talon/browser credentials are not accessed. The session grants ordinary ship
+login access rather than theme-only permission.
 
-Failed local state saves are reported as errors, not successful removal. Removing
-and re-adding the same ship creates a new connection ID so stale queued work
-cannot target the replacement session.
+Nonsecret account and desktop state lives under
+`$XDG_STATE_HOME/omarchy-urbit-theme` (normally
+`~/.local/state/omarchy-urbit-theme`). Atomic state writes and separate account
+and desktop process locks protect it. The plugin-owned live helper runs only
+while the shell owns the plugin; it is not a separately installed service.
 
-### Retries And Reconciliation
+On the first remote application the plugin creates:
 
-Each ship retries transient failures independently with bounded backoff (2, 5,
-and 15 seconds). Ready work for other ships is not held behind a retry timer.
-The latest theme replaces obsolete queued palettes. Changes made while the
-shell/plugin is not running reconcile at startup for syncing ships.
+- An ownership-checked working theme at `~/.config/omarchy/themes/urbit-synced`.
+- A generated `~/.local/state/omarchy-urbit-theme/appearance.lua` and a guarded
+  trailing include in `~/.config/hypr/hyprland.lua`.
+- `hyprland-before-sync.lua`, preserving the original configuration before that
+  include was added.
 
-Passive refresh and unchanged-palette checks never repeatedly reassert a theme
-over a later manual choice made in Talon. To re-send it deliberately, pause and
-resume that row. This emits fresh settings events even if the ship already
-stores identical values. Refresh Preview only refreshes local presentation and
-status; it does not publish.
+The generated window override applies only to the selected shared slug. A
+deliberate local theme selection clears it before capturing the new theme.
+Existing theme sources are preserved. Edits to the generated working theme are
+detected and must be preserved before it can be regenerated.
 
-## Existing Connections
+Removal leaves published settings intact. Logout and keyring cleanup are
+bounded best-effort operations; a locked keyring or offline ship produces an
+inline warning without trapping the row in the list.
 
-Version 0.2 migrates the version-1 single-account state into the ship list while
-retaining its URL, ship, sync/pause preference, pending status, timestamps, and
-palette fingerprint. The existing origin-scoped Secret Service entry is reused:
-no re-login or credential migration is required. An empty old account becomes
-an empty list. Observation can migrate in memory; the next mutation persists
-the new disk format atomically. Do not downgrade to the single-account helper
-after the new format has been saved.
+## Diagnostics and tests
 
-For this protocol upgrade, restart the Omarchy shell after replacing the files
-(the explicit `--restart-shell` flag above does this). A plugin rescan alone can
-retain old QML/JavaScript in the running engine, pairing the old panel with the
-new helper and showing an invalid-response error. Restarting refreshes the bar
-and popups; it does not restart Talon or the ships.
-
-Up to 64 origins can be configured. Duplicate normalized URLs are rejected;
-different origins remain independently authenticated even if they identify the
-same ship. Avoid adding aliases for the same ship unless that is intentional.
-
-## Palette And Ship Contract
-
-| Omarchy | Talon |
-| --- | --- |
-| `accent` (fallback `blue`, then `foreground`) | `primary` |
-| `blue` (fallback primary) | `secondary` |
-| `green` (fallback secondary) | `tertiary` |
-| `background` | `background` |
-| `lighter_background` (fallback background) | `surface` |
-| `mode` | `dark` |
-
-Omarchy's resolver supplies aliases and derived colors from
-`~/.local/state/omarchy/current/theme/colors.toml`. Edit a user theme and apply
-it normally; unapplied source edits are not published.
-
-The publisher uses `%settings`, mark `%settings-event`, namespace `talon`,
-bucket `ui-prefs`, entry `themes`. It updates and selects the stable
-`omarchy-urbit-theme` ID, preserving unrelated saved themes from the snapshot
-it read. Entry values are JSON serialized as strings. The `accent` entry is
-updated separately with `enabled:false`, preserving its other fields. Malformed
-existing data is rejected, never replaced with an empty library.
-
-Actual publications re-send both entries, process Gall acknowledgements, and
-verify ship storage. Already-matching values cannot prove an unacknowledged
-re-send succeeded. Confirmation means ship storage, not that every client has
-rendered it. Theme and accent updates are not atomic; partial writes remain
-pending and the next attempt reconciles both.
-
-### Compatibility Limits
-
-- This uses Talon's existing five-color model. Text, selection, errors, and
-  surface ramps are derived by Talon, not exact Omarchy copies. Fonts and other
-  styles cannot be added to unchanged Talon clients through this schema.
-- `%settings` has no compare-and-swap. A concurrent Talon edit between read and
-  write can be overwritten even when verification succeeds. Use one automatic
-  publisher per ship and avoid editing its theme library during publication.
-- A client can miss an event between initial settings scry and subscription.
-  Let it finish connecting, then pause/resume its plugin row to resend. This
-  recovery was verified with Talon 1.7.8 without restarting or modifying Talon.
-- Sleeping clients catch up on reconnect. This plugin cannot repair client sync
-  defects. Include Android fresh-login and ship-switch behavior in acceptance
-  testing; affected versions may need a restart.
-- Omarchy compatibility is based on the installed 4.0 interfaces and upstream
-  4.0.4 sources, not a promise covering every future 4.x release.
-
-## Credentials And Diagnostics
-
-Login uses stdin, not process arguments. Only an origin-bound Eyre session is
-saved in Secret Service under application `omarchy-urbit-theme`; `+code` is
-never saved. The session grants ordinary ship-login access, not theme-only
-permission. Trust the plugin and destination. QML/Python cannot guarantee
-memory erasure, but credential fields and handoff buffers are cleared promptly.
-
-Private nonsecret state lives in
-`$XDG_STATE_HOME/omarchy-urbit-theme/state.json` (normally
-`~/.local/state/omarchy-urbit-theme/state.json`), with permissions, atomic writes,
-and a process lock. Ship mutations carry the connection ID, origin, and `@p`;
-the helper validates all three before using credentials.
-
-Local observation commands, requiring no credentials:
+Read-only local observations:
 
 ```sh
 python3 -B client/main.py status <<< '{}'
 python3 -B client/main.py preview <<< '{}'
+omarchy-shell urbit-theme desktopStatus
+python3 -B scripts/check-desktop.py
 ```
 
-Status never accesses the keyring or network. Preview runs Omarchy's read-only
-color resolver. See [CONTRACT.md](CONTRACT.md) for protocol v2.
-
-## Uninstall
-
-Pause all rows and let the current operation finish. Use X on each row first
-if you want sessions logged out and forgotten, then run:
-
-```sh
-python3 -B scripts/install.py uninstall
-```
-
-This removes only the unmodified installer-owned plugin and its hook. It
-preserves state and ship settings. Retained syncing rows can resume on reinstall.
-Native Git installations should use Omarchy's plugin removal tools and remove
-their auxiliary hook separately after checking ownership.
-
-## Testing
+The final command captures local appearance and validates generated Lua using
+Hyprland's config-only verifier, without applying it.
 
 ```sh
 python3 -B -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py'
@@ -235,22 +227,40 @@ omarchy plugin validate .
 node tests/qml/run.js
 ```
 
-Python tests use local fake Eyre HTTP/SSE servers, isolated state, and fake
-keyrings. They cover migration, distinct sessions, partial failures, logout,
-offline removal, stale actions, and full helper subprocesses. Model tests cover
-shared snapshots, per-ship retries and cancellation, and error recovery.
+Tests include two complete sync processes with isolated homes, synthetic-only
+keyrings, inert desktop commands, and a loopback HTTP/SSE ship. They cover
+first login, both directions, effects, pause/resume, restart, the Talon bridge,
+lost acknowledgements, concurrent arrivals, missing fonts, unsafe profile
+rejection, and installer upgrades/rollback. QML tests include real SDK/process
+and hook IPC checks in a disposable shell. Missing QML prerequisites fail unless
+`--allow-skip` is explicitly requested.
 
-QML checks use offscreen fixtures and installed Omarchy controls, including
-credential clearing and row interactions. Real SDK/process and hook IPC tests
-run in a disposable shell with an inert backend, never the current desktop.
-Missing prerequisites fail unless `--allow-skip` is explicit. The popup test
-adapter does not prove real Wayland placement, focus, or screen constraints.
+Two physical machines and Talon desktop/mobile visual acceptance remain useful
+operator checks; the simulations do not claim those have been performed.
 
-Before release, verify real panel login/keyring persistence; two independent
-test ships receiving the same theme; one offline while the other succeeds;
-pause/resume/removal; a retained v1 connection after upgrade; desktop/mobile
-propagation; and a clean Omarchy installation with larger text/long ship lists.
-No automated test installs hooks, logs into a production ship, or changes Talon.
+## Uninstall
+
+Pause desktop sync and all ship rows. Use X first if you want their plugin
+sessions logged out and forgotten. For a native Git installation:
+
+```sh
+omarchy plugin remove thelifeandtimes.urbit-theme
+```
+
+Omarchy's native remover does not run plugin cleanup callbacks. The two hook
+files may remain; their helper is no longer present, so they cannot publish.
+They can be removed manually or reused by a later installation. For an
+installer-managed snapshot:
+
+```sh
+python3 -B scripts/install.py uninstall
+```
+
+This removes the unmodified installer-owned plugin and both hooks. State, the
+last applied appearance, generated appearance files, and ship settings are
+retained. To stop using the last window override, remove the clearly marked
+`omarchy-urbit-theme appearance` include from `hyprland.lua` and reload Hyprland;
+do not replace later personal edits with the old backup wholesale.
 
 ## License
 

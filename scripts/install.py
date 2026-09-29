@@ -13,11 +13,14 @@ import tempfile
 
 ID = "thelifeandtimes.urbit-theme"
 MARKER = ".urbit-theme-install.json"
-FILES = (
+OLD_FILES = (
     "manifest.json", "Service.qml", "Panel.qml", "Model.js", "README.md",
     "LICENSE", "CONTRACT.md", "client/main.py", "client/support.py", "client/eyre.py",
 )
+PROFILE_FILES = OLD_FILES + ("PROFILE.md", "client/profile.py", "client/sync.py")
+FILES = PROFILE_FILES + ("client/native.py",)
 HOOK = "omarchy-urbit-theme"
+FONT_HOOK = "omarchy-urbit-font"
 SOURCE = Path(__file__).resolve().parents[1]
 
 
@@ -52,7 +55,7 @@ def inspect(target, hook):
     receipt = json.loads(regular(target / MARKER))
     if (receipt.get("id") != ID or receipt.get("version") != 1
             or not isinstance(receipt.get("files"), dict)
-            or set(receipt["files"]) != set(FILES)):
+            or set(receipt["files"]) not in (set(FILES), set(PROFILE_FILES), set(OLD_FILES))):
         raise RuntimeError("The existing installation has no recognized ownership receipt.")
     found = set()
     for path in target.rglob("*"):
@@ -60,13 +63,16 @@ def inspect(target, hook):
             raise RuntimeError(f"Refusing an installed symlink: {path}")
         if path.is_file() and path.relative_to(target).as_posix() != MARKER:
             found.add(path.relative_to(target).as_posix())
-    if found != set(FILES):
+    if found != set(receipt["files"]):
         raise RuntimeError("The installed file set was changed; refusing to remove user files.")
     for name, expected in receipt["files"].items():
         if digest(regular(target / name)) != expected:
             raise RuntimeError(f"Installed file was modified; preserve it before replacing: {name}")
     if hook.exists() and digest(regular(hook)) != receipt.get("hook"):
         raise RuntimeError("The installed hook was modified; refusing to replace it.")
+    font_hook = hook.parent.parent / "font-set.d" / FONT_HOOK
+    if font_hook.exists() and digest(regular(font_hook)) != receipt.get("fontHook"):
+        raise RuntimeError("The font hook was modified or is unmanaged; refusing to replace it.")
     return receipt
 
 
@@ -78,6 +84,9 @@ def install(source, home, replace=False, enable=False, runner=run, restart_shell
     target, hook = paths(home)
     payload = {name: regular(source / name) for name in FILES}
     hook_data = regular(source / "hooks" / HOOK)
+    font_data = regular(source / "hooks" / FONT_HOOK)
+    font_hook = hook.parent.parent / "font-set.d" / FONT_HOOK
+    safe_parents(font_hook)
     if json.loads(payload["manifest.json"]).get("id") != ID:
         raise RuntimeError("Unexpected plugin identity.")
     runner(["omarchy", "plugin", "validate", str(source)])
@@ -86,9 +95,10 @@ def install(source, home, replace=False, enable=False, runner=run, restart_shell
         if not replace:
             raise RuntimeError("Already installed. Use --replace for an unmodified managed snapshot.")
         inspect(target, hook)
-    elif hook.exists():
+    elif hook.exists() or font_hook.exists():
         raise RuntimeError("A hook with this name already exists; refusing to overwrite it.")
     old_hook = regular(hook) if hook.exists() else None
+    old_font_hook = regular(font_hook) if font_hook.exists() else None
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".urbit-theme-stage-", dir=target.parent) as temp:
         stage = Path(temp) / "plugin"
@@ -98,7 +108,7 @@ def install(source, home, replace=False, enable=False, runner=run, restart_shell
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
             dest.chmod(0o644)
-        receipt = dict(version=1, id=ID, files={k: digest(v) for k, v in payload.items()}, hook=digest(hook_data))
+        receipt = dict(version=1, id=ID, files={k: digest(v) for k, v in payload.items()}, hook=digest(hook_data), fontHook=digest(font_data))
         (stage / MARKER).write_text(json.dumps(receipt, indent=2) + "\n")
         backup = Path(temp) / "previous"
         if exists:
@@ -108,6 +118,9 @@ def install(source, home, replace=False, enable=False, runner=run, restart_shell
             runner(["omarchy", "hook", "install", "theme-set", str(source / "hooks" / HOOK)])
             if regular(hook) != hook_data:
                 raise RuntimeError("Omarchy did not install the expected hook.")
+            runner(["omarchy", "hook", "install", "font-set", str(source / "hooks" / FONT_HOOK)])
+            if regular(font_hook) != font_data:
+                raise RuntimeError("Omarchy did not install the expected font hook.")
         except Exception:
             shutil.rmtree(target)
             if exists:
@@ -117,14 +130,22 @@ def install(source, home, replace=False, enable=False, runner=run, restart_shell
                 hook.chmod(0o755)
             elif hook.exists() and not hook.is_symlink() and regular(hook) == hook_data:
                 hook.unlink()
+            if old_font_hook is not None:
+                font_hook.write_bytes(old_font_hook)
+                font_hook.chmod(0o755)
+            elif font_hook.exists() and not font_hook.is_symlink() and regular(font_hook) == font_data:
+                font_hook.unlink()
             raise
     print(f"Installed snapshot: {target}")
     print(f"Installed theme hook: {hook}")
     if enable:
-        runner(["omarchy-shell", "shell", "rescanPlugins"])
-        runner(["omarchy", "plugin", "enable", ID, "--section", "right"])
         if restart_shell:
+            # Clear the old QML engine before enabling. Rescanning a replacement
+            # first can retain old components and briefly duplicate IPC handlers.
             runner(["omarchy", "restart", "shell"])
+        else:
+            runner(["omarchy-shell", "shell", "rescanPlugins"])
+        runner(["omarchy", "plugin", "enable", ID, "--section", "right"])
     else:
         print(f"Enable explicitly: omarchy-shell shell rescanPlugins; omarchy plugin enable {ID}")
 
@@ -137,6 +158,9 @@ def uninstall(home, runner=run):
     runner(["omarchy", "plugin", "disable", ID])
     if hook.exists():
         hook.unlink()
+    font_hook = hook.parent.parent / "font-set.d" / FONT_HOOK
+    if font_hook.exists():
+        font_hook.unlink()
     shutil.rmtree(target)
     runner(["omarchy-shell", "shell", "rescanPlugins"])
     print("Removed this plugin and hook. Ship settings and local session/state were retained.")

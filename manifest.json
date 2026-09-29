@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "thelifeandtimes.urbit-theme",
   "name": "Urbit Theme",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "author": "Stuart Christoph",
   "license": "MIT",
-  "description": "Sync the current Omarchy palette to multiple Urbit ships with independent pause and removal controls.",
+  "description": "Share a full Omarchy appearance profile across computers through Urbit settings, with an eleven-color Talon bridge.",
   "kinds": ["service", "bar-widget"],
   "keepLoaded": true,
   "entryPoints": {

@@ -7,17 +7,19 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 from test_backend import CODE, SECRET, FakeEyre
-from client.support import account
+from client.support import account, StateStore
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_ID = "omarchy-urbit-theme"
 NODE = shutil.which("node")
 PALETTE = dict(id=PLUGIN_ID, name="Process Fixture", dark=True, primary="#ABCDEF",
-               secondary="#334455", tertiary="#667788", background="#111111", surface="#222222")
+               secondary="#334455", tertiary="#667788", background="#111111", surface="#222222",
+               text="#EEEEEE", muted="", raised="#222222", error="", selection="", link="#334455")
 
 # This executable is a test double, NOT a plaintext keyring implementation.
 # It accepts only the exact synthetic session issued by this test's FakeEyre.
@@ -243,6 +245,20 @@ class ProcessTests(unittest.TestCase):
         self.assertEqual(removed["state"], {"ships": []})
         self.assertEqual(removed["warning"]["code"], "cleanup")
         self.assertEqual(self.cli("status")["state"], {"ships": []})
+
+    def test_pause_waits_for_an_inflight_bridge_operation(self):
+        expected = self.login()
+        with subprocess.Popen([sys.executable, "-B", str(ROOT / "client/main.py"), "set-auto"],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, env=self.env) as process:
+            with StateStore(self.state_file.parent).locked():
+                process.stdin.write(json.dumps({"enabled": False, "expectedAccount": expected}))
+                process.stdin.close()
+                time.sleep(0.2)
+                self.assertIsNone(process.poll())
+            self.assertEqual(process.wait(timeout=5), 0)
+            self.assertFalse(json.loads(process.stdout.read())["state"]["ships"][0]["automatic"])
+            self.assertEqual(process.stderr.read(), "")
 
     def test_v1_migration_reuses_origin_keyring_without_reading_it_on_observation(self):
         expected = self.login()

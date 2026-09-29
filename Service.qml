@@ -7,6 +7,9 @@ Item {
   property var shell: null
   property var manifest: null
   property var settings: ({})
+  property bool desktopEnabled: true
+  property var desktopState: ({ status: "Starting desktop sync", error: "", hub: null, paused: false, theme: "", bridgeErrors: {} })
+  property string desktopBuffer: ""
   property var account: Model.emptyState()
   property var currentPalette: null
   property var operationErrors: ({})
@@ -23,7 +26,7 @@ Item {
   property var rowErrors: ({})
   readonly property bool busy: queue.running !== "" || queue.controls.length > 0
   readonly property bool canLogin: loaded && account.ships.length < 64
-    && queue.running === "" && queue.controls.length === 0 && !helper.running
+    && queue.running === "" && queue.controls.length === 0 && !helper.running && !(desktopEnabled && desktopState.bridgeBusy)
   readonly property string statusText: !loaded ? "Loading ships" : busy ? "Working: " + queue.running
     : account.ships.length + " ships"
 
@@ -47,6 +50,7 @@ Item {
   }
 
   function themeChanged() {
+    desktopCommand({ action: "changed" })
     queue = Model.request(queue, "theme", account)
     retry.stop()
     debounce.restart()
@@ -73,6 +77,13 @@ Item {
 
   function pump() {
     if (queue.running || helper.running) return
+    if (desktopEnabled) {
+      // The profile coordinator owns publication. Never send a joining
+      // computer's old local palette before it has adopted the shared profile.
+      var q = Model.copy(queue)
+      q.fanout = false; q.targets = []; q.jobs = []
+      queue = q
+    }
     retry.stop()
     queue = Model.next(queue, account, Date.now())
     var action = queue.running
@@ -149,12 +160,68 @@ Item {
     Qt.callLater(pump)
   }
 
-  Component.onCompleted: Qt.callLater(pump)
+  function desktopCommand(value) {
+    if (desktopEnabled && desktop.running) desktop.write(JSON.stringify(value) + "\n")
+  }
+
+  function startDesktop() {
+    if (!desktopEnabled || desktop.running) return
+    var path = Model.localPath(Qt.resolvedUrl("client/sync.py"))
+    if (!path) return
+    desktopBuffer = ""
+    desktop.command = ["python3", "-B", path, "serve"]
+    desktop.stdinEnabled = true
+    desktop.running = true
+  }
+
+  Component.onCompleted: { Qt.callLater(pump); Qt.callLater(startDesktop) }
   Component.onDestruction: pendingInput = ""
 
   IpcHandler {
     target: "urbit-theme"
     function themeChanged(): string { root.themeChanged(); return "queued" }
+    function desktopStatus(): string { return JSON.stringify(root.desktopState) }
+  }
+
+  Timer {
+    interval: 5000
+    running: root.desktopEnabled
+    repeat: true
+    onTriggered: { root.startDesktop(); if (!root.busy) root.refresh() }
+  }
+  Process {
+    id: desktop
+    objectName: "desktopSyncHelper"
+    stdinEnabled: true
+    stdout: SplitParser {
+      splitMarker: ""
+      onRead: function(data) {
+        root.desktopBuffer += data
+        if (root.desktopBuffer.length > Model.maxOutput) {
+          root.desktopBuffer = ""
+          desktop.signal(9)
+          return
+        }
+        var end
+        while ((end = root.desktopBuffer.indexOf("\n")) >= 0) {
+          var line = root.desktopBuffer.substring(0, end)
+          root.desktopBuffer = root.desktopBuffer.substring(end + 1)
+          try {
+            var value = JSON.parse(line)
+            if (!Model.text(value.status, 256) || !Model.text(value.error, 512)
+                || typeof value.paused !== "boolean" || !Model.text(value.theme, 256)
+                || (value.hub !== null && (!Model.text(value.hub.id, 64) || !Model.text(value.hub.ship, 256)))) continue
+            root.desktopState = value
+          } catch (_) {}
+        }
+      }
+    }
+    stderr: SplitParser { splitMarker: ""; onRead: function(data) {} }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode !== 0 || exitStatus !== 0)
+        root.desktopState = { status: "Desktop sync restarting", error: root.desktopState.error,
+          hub: root.desktopState.hub, paused: root.desktopState.paused, theme: root.desktopState.theme, bridgeErrors: {} }
+    }
   }
 
   Timer {

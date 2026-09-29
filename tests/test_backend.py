@@ -192,9 +192,10 @@ class PaletteTests(unittest.TestCase):
     def test_mapping_and_canonical_hex(self):
         self.colors += "accent\t#aabbcc\nblue\t#123abc\ngreen\t#abc123\nlighter_background\t#223344\n"
         palette = resolve_palette(self.home, self.runner)
-        self.assertEqual(set(palette), set(PALETTE))
+        self.assertEqual(set(palette), set(PALETTE) | {"text", "muted", "raised", "error", "selection", "link"})
         self.assertEqual(palette, dict(id=PLUGIN_ID, name="My Theme", dark=True, primary="#AABBCC",
-                                      secondary="#123ABC", tertiary="#ABC123", background="#112233", surface="#223344"))
+                                      secondary="#123ABC", tertiary="#ABC123", background="#112233", surface="#223344",
+                                      text="#AABBCC", muted="", raised="#223344", error="", selection="", link="#123ABC"))
 
     def test_optional_fallbacks(self):
         palette = resolve_palette(self.home, self.runner)

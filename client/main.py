@@ -153,7 +153,7 @@ class Helper:
         record, palette, error = None, None, None
         self.warning = None
         try:
-            with self.store.locked():
+            with self.store.locked(wait=action in ("set-auto", "disconnect")):
                 record = self.store.load()
                 try:
                     palette = self.dispatch(action, value, record)
@@ -197,7 +197,7 @@ def main():
         raise Failure("timeout", "The helper operation timed out; publication was not confirmed.", True)
 
     signal.signal(signal.SIGALRM, deadline)
-    signal.setitimer(signal.ITIMER_REAL, 45)
+    signal.setitimer(signal.ITIMER_REAL, 100 if sys.argv[1:] and sys.argv[1] in ("set-auto", "disconnect") else 45)
     try:
         if len(sys.argv) != 2:
             raise Failure("input", "Specify one helper action.")

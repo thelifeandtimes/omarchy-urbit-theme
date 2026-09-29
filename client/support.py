@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 PLUGIN_ID = "omarchy-urbit-theme"
 LIMIT = 1024 * 1024
+EXTRA_COLORS = ("text", "muted", "raised", "error", "selection", "link")
 
 
 class Failure(Exception):
@@ -89,12 +90,12 @@ def origin(value):
         raise error from None
 
 
-def command(argv, data=b"", timeout=8, limit=65536):
+def command(argv, data=b"", timeout=8, limit=65536, env=None):
     """Bound both time and output, without placing captured secrets on disk."""
     error = Failure("command", "A required local command failed or is unavailable.", True)
     try:
         process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL, start_new_session=True)
+                                   stderr=subprocess.DEVNULL, start_new_session=True, env=env)
     except OSError:
         raise error from None
     output = bytearray()
@@ -176,8 +177,11 @@ def resolve_palette(home=None, runner=command):
     mode = colors.get("mode")
     if mode not in ("dark", "light"):
         raise Failure("palette", "Omarchy did not resolve a valid theme mode.", True)
-    return dict(id=PLUGIN_ID, name=name, dark=mode == "dark", primary=primary,
-                secondary=secondary, tertiary=tertiary, background=background, surface=surface)
+    palette = dict(id=PLUGIN_ID, name=name, dark=mode == "dark", primary=primary,
+                   secondary=secondary, tertiary=tertiary, background=background, surface=surface)
+    for key, source in zip(EXTRA_COLORS, ("foreground", "muted", "lighter_background", "red", "selection", "blue")):
+        palette[key] = hex_color(colors[source]) if colors.get(source) else ""
+    return palette
 
 
 def fingerprint(palette):
@@ -187,7 +191,7 @@ def fingerprint(palette):
 
 def validate_palette(value):
     keys = {"id", "name", "dark", "primary", "secondary", "tertiary", "background", "surface"}
-    if (not isinstance(value, dict) or set(value) != keys or value["id"] != PLUGIN_ID
+    if (not isinstance(value, dict) or not keys <= set(value) or set(value) - keys - set(EXTRA_COLORS) or value["id"] != PLUGIN_ID
             or type(value["dark"]) is not bool or not isinstance(value["name"], str)
             or not value["name"].strip() or len(value["name"]) > 256
             or any(ord(c) < 32 or ord(c) == 127 for c in value["name"])):
@@ -195,6 +199,9 @@ def validate_palette(value):
     result = dict(value)
     for key in ("primary", "secondary", "tertiary", "background", "surface"):
         result[key] = hex_color(value[key])
+    for key in EXTRA_COLORS:
+        if key in value:
+            result[key] = hex_color(value[key]) if value[key] != "" else ""
     return result
 
 
@@ -283,7 +290,7 @@ class StateStore:
             raise Failure("state", "The state directory must be absolute.")
 
     @contextlib.contextmanager
-    def locked(self):
+    def locked(self, wait=False):
         try:
             self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
             info = self.root.lstat()
@@ -293,10 +300,15 @@ class StateStore:
             fd = os.open(self.root / "lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "rb") as lock:
                 self._private(lock.fileno())
-                try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    raise Failure("busy", "Another helper operation is running.", True) from None
+                deadline = time.monotonic() + (50 if wait else 0)
+                while True:
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if time.monotonic() >= deadline:
+                            raise Failure("busy", "Another helper operation is running.", True) from None
+                        time.sleep(0.1)
                 yield
         except OSError:
             raise Failure("state", "Private local state could not be accessed.") from None

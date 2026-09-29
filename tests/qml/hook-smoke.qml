@@ -18,6 +18,7 @@ ShellRoot {
     id: serviceLoader
     active: true
     sourceComponent: Plugin.Service {
+      desktopEnabled: false
       onQueueChanged: {
         if (queue.generation !== root.themeRequests) {
           root.themeRequests = queue.generation

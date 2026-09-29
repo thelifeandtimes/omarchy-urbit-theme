@@ -1,3 +1,8 @@
 #!/bin/bash
 # Omarchy runs hooks synchronously. Queue work in the shell, never on the ship here.
+[[ ${OMARCHY_URBIT_THEME_REMOTE:-} == 1 ]] && exit 0
+helper="$HOME/.config/omarchy/plugins/thelifeandtimes.urbit-theme/client/sync.py"
+if [[ -f $helper ]]; then
+  timeout 5 python3 -B "$helper" notify theme >/dev/null 2>&1 || true
+fi
 timeout 3 omarchy-shell urbit-theme themeChanged >/dev/null 2>&1 || true

@@ -106,20 +106,19 @@ Ui.Panel {
             text: root.currentPalette ? root.currentPalette.name + (root.currentPalette.dark ? " / dark" : " / light")
               : "Palette preview is unavailable."
           }
-          RowLayout {
+          Flow {
             width: parent.width
             spacing: Style.space(6)
             visible: !!root.currentPalette
             Repeater {
-              model: ["primary", "secondary", "tertiary", "background", "surface"]
+              model: ["primary", "secondary", "tertiary", "background", "surface", "text", "muted", "raised", "error", "selection", "link"]
               ColumnLayout {
                 required property string modelData
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
+                width: (content.width - Style.space(24)) / 5
                 Rectangle {
                   Layout.fillWidth: true
                   height: Style.space(30)
-                  color: root.currentPalette ? root.currentPalette[modelData] : "transparent"
+                  color: root.currentPalette && root.currentPalette[modelData] ? root.currentPalette[modelData] : "transparent"
                   border.width: 1
                   border.color: root.foreground
                   radius: Style.cornerRadius
@@ -144,6 +143,37 @@ Ui.Panel {
             onClicked: if (root.service) root.service.refresh()
           }
           Ui.PanelSeparator { width: parent.width }
+          Column {
+            width: parent.width
+            spacing: Style.space(8)
+            visible: !!root.service && root.service.desktopEnabled
+            Ui.PanelSectionHeader { text: "DESKTOP SYNC" }
+            Body {
+              text: root.service ? root.service.desktopState.status
+                + (root.service.desktopState.hub ? " · " + root.service.desktopState.hub.ship : "")
+                + (root.service.desktopState.theme ? " · " + root.service.desktopState.theme : "") : ""
+            }
+            Body {
+              text: root.service ? root.service.desktopState.error : ""
+              visible: text !== ""
+              color: Color.urgent
+            }
+            Flow {
+              width: parent.width
+              spacing: Style.space(8)
+              Action {
+                text: root.service && root.service.desktopState.paused ? "Resume desktop sync" : "Pause desktop sync"
+                enabled: !!root.service && !!root.service.desktopState.hub
+                onClicked: root.service.desktopCommand({ action: root.service.desktopState.paused ? "resume" : "pause" })
+              }
+              Action { text: "Retry"; onClicked: if (root.service) root.service.desktopCommand({ action: "retry" }) }
+            }
+            Body {
+              font.pixelSize: Style.font.caption
+              text: "The hub owns the shared appearance: colors, font, corners, spacing, borders and effects. Joining adopts its profile; an empty hub starts with this desktop."
+            }
+            Ui.PanelSeparator { width: parent.width }
+          }
           Ui.PanelSectionHeader { objectName: "shipsSection"; text: "SHIPS" }
           Body { visible: root.ready && !root.account.ships.length; text: "No ships added." }
           Repeater {
@@ -172,6 +202,13 @@ Ui.Panel {
                     text: shipRow.modelData.url
                   }
                   Accessible.name: text
+                }
+                Action {
+                  text: root.service && root.service.desktopState.hub && root.service.desktopState.hub.id === shipRow.modelData.id ? "●" : "H"
+                  visible: !!root.service && root.service.desktopEnabled
+                  implicitWidth: Style.space(36)
+                  tooltipText: "Use " + shipRow.modelData.ship + " as this machine's desktop sync hub"
+                  onClicked: root.service.desktopCommand({ action: "hub", id: shipRow.modelData.id })
                 }
                 Action {
                   id: syncButton
@@ -226,7 +263,7 @@ Ui.Panel {
             spacing: Style.space(8)
             visible: root.adding
             onVisibleChanged: if (!visible) root.clearSecret()
-            Body { text: "Add & Sync enables this same palette on all Talon clients for this ship and disables Talon's separate accent override." }
+            Body { text: "Add & Sync joins the first ship's shared desktop appearance (or creates it if empty), including font and effects. It also publishes the shared colors to Talon and disables Talon's separate accent override. Additional ships receive those Talon colors; H selects the desktop hub." }
             Body { text: "Ship URL" }
             Ui.TextField {
               id: urlField

@@ -18,4 +18,4 @@ jobs:
       - name: Panel protocol and queue tests
         run: node --test tests/model.test.js
       - name: Hook syntax
-        run: bash -n hooks/omarchy-urbit-theme
+        run: bash -n hooks/omarchy-urbit-theme && bash -n hooks/omarchy-urbit-font

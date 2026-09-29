@@ -7,7 +7,7 @@ Item {
   width: 480
   height: 760
   Component { id: panelComponent; Plugin.Panel {} }
-  Component { id: serviceComponent; Plugin.Service {} }
+  Component { id: serviceComponent; Plugin.Service { desktopEnabled: false } }
   QtObject {
     id: fake
     property var account: Model.emptyState()
@@ -17,6 +17,10 @@ Item {
     property bool canLogin: true
     property string lastError: ""
     property string statusText: "Fixture ships"
+    property bool desktopEnabled: false
+    property var desktopState: ({status: "Following shared appearance", error: "", hub: null, paused: false, theme: "", bridgeErrors: {}})
+    property var lastDesktopCommand: null
+    function desktopCommand(value) { lastDesktopCommand = value }
     property int logins: 0
     property int refreshes: 0
     property string lastControl: ""
@@ -106,6 +110,29 @@ Item {
       widget.close()
       widget.open()
       compare(fake.refreshes, 1)
+    }
+    function test_desktopModeNeverPublishesTheJoiningLocalPalette() {
+      service = serviceComponent.createObject(parent, { desktopEnabled: true })
+      wait(20)
+      var helper = findChild(service, "urbitThemeHelper")
+      var desktop = findChild(service, "desktopSyncHelper")
+      verify(!!desktop)
+      compare(desktop.command[3], "serve")
+      helper.respond(response(state([row("a", true)])), 0)
+      wait(20)
+      compare(service.queue.running, "preview")
+      helper.respond(response(state([row("a", true)]), palette), 0)
+      wait(20)
+      compare(service.queue.running, "")
+      compare(service.queue.jobs.length, 0)
+      var frame = JSON.stringify({status: "Following shared appearance", error: "", hub: Model.identity(row("a", true)),
+        paused: false, theme: "tokyo-night", bridgeErrors: {}}) + "\n"
+      desktop.stdout.read(frame.substring(0, 20))
+      desktop.stdout.read(frame.substring(20))
+      compare(service.desktopState.theme, "tokyo-night")
+      service.desktopCommand({action: "pause"})
+      verify(desktop.handedOff)
+      verify(!desktop.closedAfterWrite)
     }
     function test_addCanStartWhileAnotherShipWaitsForRetry() {
       var a = row("a", true)

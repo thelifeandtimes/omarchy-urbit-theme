@@ -103,8 +103,10 @@ class Eyre:
             self.session = dict(url=self.url, ship=ship, cookieName=cookie.key, cookieValue=cookie.value)
         return self.session
 
-    def scry(self):
-        with self.request("GET", "/~/scry/settings/desk/talon.json") as response:
+    def scry(self, desk="talon"):
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", desk):
+            raise malformed()
+        with self.request("GET", "/~/scry/settings/desk/" + desk + ".json") as response:
             return loads(self.read(response))
 
     def logout(self):
@@ -119,13 +121,66 @@ class Eyre:
         with self.request("PUT", path, body) as response:
             self.read(response)
 
-    def poke(self, entry, value):
+    def watch(self, desk, stop, changed, ready):
+        """One live subscription. Caller reconnects and re-scries after every gap.
+
+        Facts are invalidations, never snapshots to replay over a newer scry.
+        Only a subscribe ACK sets ready; %settings sends no initial snapshot.
+        """
+        if not re.fullmatch(r"[a-z][a-z0-9-]*", desk):
+            raise malformed()
+        path = "/~/channel/" + uuid.uuid4().hex
+        next_id = 2
+        try:
+            self.put(path, [dict(id=1, action="subscribe", ship=self.session["ship"].removeprefix("~"),
+                                 app="settings", path="/desk/" + desk)])
+            with self.request("GET", path, stream=True) as response:
+                if response.headers.get_content_type() != "text/event-stream":
+                    raise Failure("protocol", "The ship did not return an Eyre event stream.")
+                buffer, data, event_id = b"", [], None
+                while not stop.is_set():
+                    chunk = response.read1(4096)
+                    if not chunk:
+                        raise Failure("network", "The live appearance connection closed.", True)
+                    buffer += chunk
+                    if len(buffer) + sum(map(len, data)) > LIMIT:
+                        raise Failure("size", "The ship event exceeded the safe size limit.")
+                    while b"\n" in buffer:
+                        line, buffer = buffer.split(b"\n", 1)
+                        line = line.rstrip(b"\r")
+                        if not line:
+                            if data:
+                                event = loads(b"\n".join(data))
+                                if event_id is None or not isinstance(event, dict):
+                                    raise Failure("protocol", "Invalid live appearance event.")
+                                self.put(path, [dict(id=next_id, action="ack", **{"event-id": event_id})])
+                                next_id += 1
+                                if event.get("id") == 1:
+                                    if event.get("err") is not None or event.get("response") == "quit":
+                                        raise Failure("network", "The appearance subscription must reconnect.", True)
+                                    if event.get("response") == "subscribe":
+                                        ready.set()
+                                    changed.set()
+                            data, event_id = [], None
+                        elif line.startswith(b"data:"):
+                            data.append(line[5:].removeprefix(b" "))
+                        elif line.startswith(b"id:"):
+                            raw = line[3:].strip()
+                            if not re.fullmatch(rb"[0-9]{1,18}", raw):
+                                raise Failure("protocol", "Invalid live appearance event ID.")
+                            event_id = int(raw)
+        finally:
+            ready.clear()
+            with contextlib.suppress(Failure):
+                self.put(path, [dict(id=next_id, action="delete")])
+
+    def poke(self, entry, value, desk="talon", bucket="ui-prefs"):
         path = "/~/channel/" + uuid.uuid4().hex
         next_id = 2
         try:
             self.put(path, [dict(id=1, action="poke", ship=self.session["ship"].removeprefix("~"),
                                  app="settings", mark="settings-event", json={"put-entry": {
-                                     "desk": "talon", "bucket-key": "ui-prefs", "entry-key": entry,
+                                      "desk": desk, "bucket-key": bucket, "entry-key": entry,
                                      "value": dumps(value)}})])
             # Eyre queues the poke response until this GET attaches. Parse every
             # buffered frame; HTTP acceptance alone is not Gall delivery.
@@ -207,6 +262,10 @@ def entries(body):
             raise malformed()
         for color in ("primary", "secondary", "tertiary", "background", "surface"):
             if not isinstance(theme.get(color), str) or not re.fullmatch(r"#?[0-9A-Fa-f]{6}", theme[color].strip()):
+                raise malformed()
+        for color in ("text", "muted", "raised", "error", "selection", "link"):
+            value = theme.get(color)
+            if value is not None and value != "" and (not isinstance(value, str) or not re.fullmatch(r"#?[0-9A-Fa-f]{6}", value.strip())):
                 raise malformed()
     if (accent.get("enabled") is not None and type(accent["enabled"]) is not bool
             or "mode" in accent and not isinstance(accent["mode"], str)

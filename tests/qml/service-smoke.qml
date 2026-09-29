@@ -4,7 +4,7 @@ import "." as Plugin
 import "Model.js" as Model
 
 ShellRoot {
-  Plugin.Service { id: service }
+  Plugin.Service { id: service; desktopEnabled: false }
   property int phase: 0
   function resource(name) {
     for (var i = 0; i < service.resources.length; i++)
