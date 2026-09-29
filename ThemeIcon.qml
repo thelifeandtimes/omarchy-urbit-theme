@@ -1,20 +1,16 @@
 import QtQuick
 
 // A font-independent palette outline with an optically centered Urbit tilde.
-// Keep the bar glyph open and uncluttered; only the large hero adds paint.
+// Use the same uncluttered outline and tilde at both bar and hero sizes.
 Canvas {
   id: root
   property real size: 24
   property color ink: "white"
-  property var palette: null
-  property bool colored: false
   implicitWidth: size
   implicitHeight: size
   antialiasing: true
 
   onInkChanged: requestPaint()
-  onPaletteChanged: requestPaint()
-  onColoredChanged: requestPaint()
   onWidthChanged: requestPaint()
   onHeightChanged: requestPaint()
 
@@ -27,7 +23,6 @@ Canvas {
     ctx.lineJoin = "round"
     ctx.lineCap = "round"
     ctx.strokeStyle = ink
-    ctx.fillStyle = ink
 
     ctx.beginPath()
     ctx.moveTo(32, 5)
@@ -40,26 +35,15 @@ Canvas {
     ctx.bezierCurveTo(56, 37, 59, 34, 59, 28)
     ctx.bezierCurveTo(59, 15, 46, 5, 32, 5)
     ctx.closePath()
-    ctx.globalAlpha = 0.04
-    if (colored) ctx.fill()
-    ctx.globalAlpha = 1
     ctx.stroke()
 
-    var pots = [[17, 21, "error"], [29, 14, "primary"], [43, 18, "tertiary"]]
-    for (var i = 0; colored && i < pots.length; i++) {
-      var pot = pots[i]
-      ctx.fillStyle = colored && palette && palette[pot[2]] ? palette[pot[2]] : ink
-      ctx.beginPath()
-      ctx.arc(pot[0], pot[1], 2.8, 0, Math.PI * 2)
-      ctx.fill()
-    }
-
-    ctx.strokeStyle = ink
+    // Center in the palette's usable body, slightly left/up of the bounding
+    // box center to balance the thumb notch. Equal-height ends read as `~`.
     ctx.lineWidth = Math.max(4, 64 / Math.max(1, width))
     ctx.beginPath()
-    ctx.moveTo(17, 34)
-    ctx.bezierCurveTo(21, 27, 25, 27, 30, 31)
-    ctx.bezierCurveTo(35, 35, 39, 35, 43, 28)
+    ctx.moveTo(15, 30)
+    ctx.bezierCurveTo(19, 23, 24, 23, 28.5, 30)
+    ctx.bezierCurveTo(33, 37, 38, 37, 42, 30)
     ctx.stroke()
   }
 }

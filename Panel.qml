@@ -140,8 +140,6 @@ Ui.Panel {
               ThemeIcon {
                 size: Style.space(36)
                 ink: root.hasError ? Color.urgent : root.foreground
-                colored: true
-                palette: root.currentPalette
               }
             }
             trailingControl: Component {
