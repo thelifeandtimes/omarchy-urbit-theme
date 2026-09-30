@@ -41,9 +41,9 @@ Canvas {
     // Equal-height ends read as `~`.
     ctx.lineWidth = Math.max(4, 64 / Math.max(1, width))
     ctx.beginPath()
-    ctx.moveTo(18, 27)
-    ctx.bezierCurveTo(22, 20, 27, 20, 31.5, 27)
-    ctx.bezierCurveTo(36, 34, 41, 34, 45, 27)
+    ctx.moveTo(20, 25)
+    ctx.bezierCurveTo(24, 18, 29, 18, 33.5, 25)
+    ctx.bezierCurveTo(38, 32, 43, 32, 47, 25)
     ctx.stroke()
   }
 }

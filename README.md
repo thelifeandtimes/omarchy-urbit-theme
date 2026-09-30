@@ -128,11 +128,11 @@ not update the running plugin.
 Build a self-contained source/install bundle (no credentials or local state):
 
 ```sh
-python3 -B scripts/package.py /path/to/omarchy-urbit-theme-0.3.6.tar.gz
+python3 -B scripts/package.py /path/to/omarchy-urbit-theme-0.3.7.tar.gz
 ```
 
 Copy it to the other machine, extract it, and run the install command above
-from its `omarchy-urbit-theme-0.3.6` directory. This works without publishing a
+from its `omarchy-urbit-theme-0.3.7` directory. This works without publishing a
 Git commit or installing any extra runtime dependencies.
 
 ## Controls and behavior
