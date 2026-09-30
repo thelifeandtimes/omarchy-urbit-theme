@@ -37,13 +37,13 @@ Canvas {
     ctx.closePath()
     ctx.stroke()
 
-    // Center in the palette's usable body, slightly left/up of the bounding
-    // box center to balance the thumb notch. Equal-height ends read as `~`.
+    // Position in the open upper body, above the thumb notch.
+    // Equal-height ends read as `~`.
     ctx.lineWidth = Math.max(4, 64 / Math.max(1, width))
     ctx.beginPath()
-    ctx.moveTo(15, 30)
-    ctx.bezierCurveTo(19, 23, 24, 23, 28.5, 30)
-    ctx.bezierCurveTo(33, 37, 38, 37, 42, 30)
+    ctx.moveTo(18, 27)
+    ctx.bezierCurveTo(22, 20, 27, 20, 31.5, 27)
+    ctx.bezierCurveTo(36, 34, 41, 34, 45, 27)
     ctx.stroke()
   }
 }
