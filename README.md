@@ -63,7 +63,7 @@ confirmation and bar placement. For a noninteractive install, append `--yes`.
 The plugin registers its theme and font hooks automatically when first enabled;
 no separate setup script or manual hook commands are needed.
 
-Open the palette-and-tilde widget (**Network Theme**) and select **+ urbit**, enter the same ship URL and `+code`,
+Open the painter's palette widget (**Network Theme**) and select **+ urbit**, enter the same ship URL and `+code`,
 then **Add & Sync**. The first connected ship is the desktop hub:
 
 - An **empty hub** starts with this computer's appearance.
@@ -128,17 +128,17 @@ not update the running plugin.
 Build a self-contained source/install bundle (no credentials or local state):
 
 ```sh
-python3 -B scripts/package.py /path/to/omarchy-urbit-theme-0.3.7.tar.gz
+python3 -B scripts/package.py /path/to/omarchy-urbit-theme-0.3.8.tar.gz
 ```
 
 Copy it to the other machine, extract it, and run the install command above
-from its `omarchy-urbit-theme-0.3.7` directory. This works without publishing a
+from its `omarchy-urbit-theme-0.3.8` directory. This works without publishing a
 Git commit or installing any extra runtime dependencies.
 
 ## Controls and behavior
 
 The Network Theme hero shows the current theme and light/dark mode, with a
-custom palette outline with an optically centered tilde, tinted by the theme. Ten compact
+painter's palette icon whose paint dots follow the active theme colors. Ten compact
 swatches fit on one line; hover for each role and hex value. Muted is hidden
 from the preview but remains part of the eleven-color Talon publication.
 Desktop sync and its status live directly on each ship row. **+ urbit** sits

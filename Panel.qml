@@ -97,7 +97,10 @@ Ui.Panel {
     active: root.opened || root.hasError
     tooltipText: "Network Theme: " + (root.currentPalette ? root.currentPalette.name : "Loading")
     iconComponent: Component {
-      ThemeIcon { ink: root.hasError ? Color.urgent : button.foreground }
+      ThemeIcon {
+        ink: root.hasError ? Color.urgent : button.foreground
+        palette: root.currentPalette
+      }
     }
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton || buttonCode === Qt.MiddleButton) {
@@ -140,6 +143,7 @@ Ui.Panel {
               ThemeIcon {
                 size: Style.space(36)
                 ink: root.hasError ? Color.urgent : root.foreground
+                palette: root.currentPalette
               }
             }
             trailingControl: Component {

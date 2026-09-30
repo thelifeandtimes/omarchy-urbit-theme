@@ -1,16 +1,18 @@
 import QtQuick
 
-// A font-independent palette outline with an optically centered Urbit tilde.
-// Use the same uncluttered outline and tilde at both bar and hero sizes.
+// A font-independent painter's palette. Paint colors track the active theme
+// at both bar and hero sizes.
 Canvas {
   id: root
   property real size: 24
   property color ink: "white"
+  property var palette: null
   implicitWidth: size
   implicitHeight: size
   antialiasing: true
 
   onInkChanged: requestPaint()
+  onPaletteChanged: requestPaint()
   onWidthChanged: requestPaint()
   onHeightChanged: requestPaint()
 
@@ -37,13 +39,14 @@ Canvas {
     ctx.closePath()
     ctx.stroke()
 
-    // Position in the open upper body, above the thumb notch.
-    // Equal-height ends read as `~`.
-    ctx.lineWidth = Math.max(4, 64 / Math.max(1, width))
-    ctx.beginPath()
-    ctx.moveTo(20, 25)
-    ctx.bezierCurveTo(24, 18, 29, 18, 33.5, 25)
-    ctx.bezierCurveTo(38, 32, 43, 32, 47, 25)
-    ctx.stroke()
+    var paints = [[16, 31, "error"], [25, 17, "primary"],
+                  [41, 17, "secondary"], [50, 29, "tertiary"]]
+    for (var i = 0; i < paints.length; i++) {
+      var paint = paints[i]
+      ctx.fillStyle = palette && palette[paint[2]] ? palette[paint[2]] : ink
+      ctx.beginPath()
+      ctx.arc(paint[0], paint[1], 4.2, 0, Math.PI * 2)
+      ctx.fill()
+    }
   }
 }
