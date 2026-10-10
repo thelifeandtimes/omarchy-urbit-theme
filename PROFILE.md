@@ -62,8 +62,11 @@ Examples of typed values:
 ```
 
 Hyprland's serialized gradient colors are **AARRGGBB**. The adapter converts
-them to its Lua configuration's `rgba(RRGGBBAA)` representation. Vectors, CSS
-quad values, floats, booleans, and strings retain their types.
+them to its Lua configuration's `rgba(RRGGBBAA)` representation. CSS gaps are
+expanded to named Lua sides (`top`, `right`, `bottom`, `left`), not arrays:
+Hyprland accepts arrays but defaults their missing named sides to zero. One- to
+four-value integer shorthand is supported. Vectors and Bezier points remain
+arrays; floats, booleans, and strings retain their types.
 
 Each curve has `name` and four numeric `points` (X0, Y0, X1, Y1). Each animation
 rule has `name`, `enabled`, `speed`, `bezier`, and `style`. Internal compositor
@@ -95,16 +98,43 @@ the next capture. Remote applications suppress both publication hooks.
 
 The application transaction is persisted before applying, because changing the
 font can restart the shell. On restart it reconciles against the hub again.
-Application failures retain the desired profile and can be retried.
+Before success, the coordinator compares all requested theme, font, color,
+shell, file, window, and animation values with a fresh capture. Comparison
+normalizes gap shorthand, color case, gradient angles, ordering of named
+animation entries, and floating-point readback precision. Additional local
+defaults are allowed. A mismatch names the differing fields, retains the
+desired application, and never adopts incorrect readback as a successful
+baseline or publishes it as a local selection. Machine-level shell overrides
+are intentionally outside the captured theme layer.
+
+Version 0.3.9 automatically reapplies existing generated overrides from older
+adapters on the first connected reconciliation, even when current values happen
+to match. The replacement carries an adapter marker, so future restarts need
+not reapply a semantically identical profile. Application failures remain
+pending and can be retried.
 
 ## Talon bridge
 
 The plugin maps the superset into `talon/ui-prefs/themes`, keeping the existing
 stable `omarchy-urbit-theme` ID and unrelated saved themes. It also disables the
-separate accent override. All six rc74 extras are explicit: text=foreground,
-muted=muted, raised=lighter_background, error=red, selection=selection,
-link=blue. An unavailable extra is `""` (Auto), never a missing key that would
-retain a client's old override. The original five-color mapping remains.
+separate accent override. Preview and publication share one mapping function.
+The original five-color mapping remains, including surface=lighter_background
+(fallback background). Extras are explicit: text=foreground, muted=muted,
+error=red, link=blue, and raised=`""` (Talon Auto). This restores Talon's derived
+raised-surface ramp instead of flattening it to the normal surface color.
+
+Selection is accent-based rather than copying Omarchy's already-subdued
+selection background: Talon composites the input at 40% opacity. When needed,
+the adapter attenuates the accent toward the surface until selected body text
+retains at least 4.5:1 contrast on both base background and surface. For source
+text already below that threshold, its lower existing contrast is the target.
+This checks the sRGB composite; cards and other Material-specific surfaces
+still need client visual acceptance. The stored Omarchy palette is not modified.
+
+An unavailable extra is `""` (Auto), never a missing key that would retain a
+client's old override. Auto raised is always explicit so the old duplicate
+surface override is cleared on every Talon client. The palette preview labels
+it Auto rather than pretending the input string is a rendered Material color.
 
 Talon rc74 does not consume font, geometry, or effect fields. Those values are
 available to future consumers, but storing them does not change existing apps.

@@ -12,9 +12,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from client.profile import (Desktop, MANAGED_THEME, colors_toml, digest, palette, parse_shell,
-                            read_remote, shell_toml, validate, window_lua)
-from client.support import CommandFailure, Failure, command
+from client.profile import (APPEARANCE_HEADER, Desktop, MANAGED_THEME, application_mismatches,
+                            colors_toml, css_sides, digest, palette, parse_shell,
+                            read_remote, shell_toml, validate, verify_application, window_lua)
+from client.support import CommandFailure, Failure, command, contrast_ratio, mix_color, resolve_palette
 
 
 def profile(theme="tokyo-night", color="#112233", device="a" * 32):
@@ -37,11 +38,12 @@ class ProfileTests(unittest.TestCase):
         p = profile()
         t = palette(p)
         self.assertEqual([t[k] for k in ("text", "muted", "raised", "error", "selection", "link")],
-                         ["#EEEEEE", "#888888", "#223344", "#EE3333", "#334455", "#123ABC"])
+                          ["#EEEEEE", "#888888", "", "#EE3333", "#123ABC", "#123ABC"])
         for key in ("muted", "lighter_background", "red", "selection", "blue"):
             del p["colors"][key]
         t = palette(p)
-        self.assertEqual([t[k] for k in ("muted", "raised", "error", "selection", "link")], [""] * 5)
+        self.assertEqual([t[k] for k in ("muted", "raised", "error", "link")], [""] * 4)
+        self.assertRegex(t["selection"], "^#[0-9A-F]{6}$")
         self.assertEqual(t["primary"], "#EEEEEE")
 
     def test_content_digest_ignores_identity_not_effects(self):
@@ -95,15 +97,91 @@ class ProfileTests(unittest.TestCase):
         self.assertIn("rgba(445566aa)", code)
         self.assertIn('quote\\"name', code)
 
+    def test_gap_shorthand_has_named_sides_and_vectors_remain_arrays(self):
+        for raw, expected in (("0", [0, 0, 0, 0]), ("5", [5, 5, 5, 5]),
+                              ("2 8", [2, 8, 2, 8]), ("3 6 9", [3, 6, 9, 6]),
+                              ("2 4 6 8", [2, 4, 6, 8])):
+            self.assertEqual(css_sides(raw), dict(zip(("top", "right", "bottom", "left"), expected)))
+        p = profile()
+        code = window_lua(p)
+        self.assertIn('["gaps_out"]={["top"]=10,["right"]=10,["bottom"]=10,["left"]=10}', code)
+        self.assertIn('["offset"]={1,2}', code)
+        for raw in ("", "1.5", "1 2 3 4 5", "1;bad", "10001"):
+            with self.assertRaises(Failure):
+                css_sides(raw)
+
+    def test_readback_compares_all_requested_fields_with_semantic_normalization(self):
+        p = profile()
+        actual = copy.deepcopy(p)
+        actual["windows"]["general:gaps_out"] = {"css": "10"}
+        actual["windows"]["general:col.active_border"] = {"gradient": "FF112233 AA445566 405deg"}
+        actual["colors"]["foreground"] = "#eeeeee"
+        actual["windows"]["general:border_size"] = {"int": 2}
+        self.assertEqual(application_mismatches(p, actual), [])
+        for group, key, value in (("windows", "general:gaps_out", {"css": "0 0 0 0"}),
+                                  ("windows", "decoration:rounding", {"int": 0}),
+                                  ("colors", "background", "#000000"),
+                                  ("shell", "font.base-size", "20"),
+                                  ("files", "btop.theme", "wrong")):
+            bad = copy.deepcopy(actual)
+            bad[group][key] = value
+            with self.assertRaises(Failure) as caught:
+                verify_application(p, bad)
+            self.assertIn(group + "." + key, caught.exception.message)
+        actual["animations"]["rules"][0]["speed"] = 8
+        self.assertIn("animations.rules.windows", application_mismatches(p, actual))
+
     @unittest.skipUnless(shutil.which("Hyprland"), "Installed Hyprland config verifier is an integration check")
-    def test_generated_lua_passes_real_hyprland_config_verifier(self):
+    def test_generated_lua_roundtrips_gap_values_in_real_hyprland(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "hyprland.lua"
-            path.write_text(window_lua(profile()))
             env = dict(os.environ, HOME=temp, XDG_CONFIG_HOME=temp, XDG_STATE_HOME=temp, XDG_CACHE_HOME=temp)
-            result = subprocess.run(["Hyprland", "--verify-config", "-c", str(path)],
-                                    env=env, capture_output=True, text=True, timeout=20)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for raw, expected in (("0", (0, 0, 0, 0)), ("5", (5, 5, 5, 5)),
+                                  ("2 8", (2, 8, 2, 8)), ("3 6 9", (3, 6, 9, 6)),
+                                  ("3 7 11 15", (3, 7, 11, 15))):
+                p = profile()
+                p["windows"]["general:gaps_in"] = {"css": raw}
+                p["windows"]["general:gaps_out"] = {"css": raw}
+                assertions = ""
+                for key in ("gaps_in", "gaps_out"):
+                    assertions += 'local v=hl.get_config("general.' + key + '")\n'
+                    for side, value in zip(("top", "right", "bottom", "left"), expected):
+                        assertions += f'assert(v.{side} == {value}, "{key}.{side} mismatch")\n'
+                path.write_text(window_lua(p) + assertions)
+                result = subprocess.run(["Hyprland", "--verify-config", "-c", str(path)],
+                                        env=env, capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_talon_surface_selection_and_preview_agree_across_dark_and_light_palettes(self):
+        themes = {
+            "everforest": ("dark", "#2D353B", "#343F44", "#D3C6AA", "#7FBBB3", "#3D484D"),
+            "miasma": ("dark", "#222222", "#2C2C2C", "#C2C2B0", "#78824B", "#383838"),
+            "solitude": ("dark", "#101315", "#101315", "#CACCCC", "#798186", "#343D41"),
+            "latte": ("light", "#EFF1F5", "#DCE0E8", "#4C4F69", "#1E66F5", "#CCD0DA"),
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            current = Path(temp) / ".local/state/omarchy/current"
+            current.mkdir(parents=True)
+            for name, (mode, background, surface, foreground, accent, selection) in themes.items():
+                with self.subTest(theme=name):
+                    p = profile(name)
+                    p["colors"].update(mode=mode, background=background, lighter_background=surface,
+                                       foreground=foreground, accent=accent, selection=selection)
+                    before = copy.deepcopy(p)
+                    mapped = palette(p)
+                    self.assertEqual(p, before)
+                    self.assertEqual(mapped["surface"], surface)
+                    self.assertEqual(mapped["raised"], "")
+                    for base in (surface, background):
+                        selected = mix_color(mapped["selection"], base, 0.4)
+                        self.assertGreaterEqual(contrast_ratio(foreground, selected), 4.5)
+                    selected = mix_color(mapped["selection"], surface, 0.4)
+                    old = mix_color(selection, surface, 0.4)
+                    self.assertGreater(contrast_ratio(selected, surface), contrast_ratio(old, surface))
+                    self.assertGreater(contrast_ratio(selected, surface), 1.2)
+                    (current / "theme.name").write_text(name)
+                    raw = "".join(k + "\t" + v + "\n" for k, v in p["colors"].items()).encode()
+                    self.assertEqual(resolve_palette(temp, lambda args: (0, raw)), mapped)
 
 
 class DesktopTests(unittest.TestCase):
@@ -198,6 +276,17 @@ class DesktopTests(unittest.TestCase):
         self.errors = ["unsupported option"]
         with self.assertRaises(Failure):
             Desktop(self.home, self.runner).apply(profile())
+
+    def test_old_generated_override_is_detected_and_repaired(self):
+        d = Desktop(self.home, self.runner)
+        self.assertFalse(d.needs_repair())
+        path = self.home / ".local/state/omarchy-urbit-theme/appearance.lua"
+        path.parent.mkdir(parents=True)
+        path.write_text('hl.config({general={gaps_out={10,10,10,10}}})\n')
+        self.assertTrue(d.needs_repair())
+        d.apply(profile())
+        self.assertTrue(path.read_text().startswith(APPEARANCE_HEADER))
+        self.assertFalse(d.needs_repair())
 
     def test_large_font_catalog_does_not_prevent_shared_profile_application(self):
         # Reproduce the affected machine's 116,124-byte listing through the real

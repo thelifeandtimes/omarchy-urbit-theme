@@ -128,11 +128,11 @@ not update the running plugin.
 Build a self-contained source/install bundle (no credentials or local state):
 
 ```sh
-python3 -B scripts/package.py /path/to/omarchy-urbit-theme-0.3.8.tar.gz
+python3 -B scripts/package.py /path/to/omarchy-urbit-theme-0.3.9.tar.gz
 ```
 
 Copy it to the other machine, extract it, and run the install command above
-from its `omarchy-urbit-theme-0.3.8` directory. This works without publishing a
+from its `omarchy-urbit-theme-0.3.9` directory. This works without publishing a
 Git commit or installing any extra runtime dependencies.
 
 ## Controls and behavior
@@ -141,6 +141,8 @@ The Network Theme hero shows the current theme and light/dark mode, with a
 painter's palette icon whose paint dots follow the active theme colors. Ten compact
 swatches fit on one line; hover for each role and hex value. Muted is hidden
 from the preview but remains part of the eleven-color Talon publication.
+Raised is explicitly Auto so Talon derives its elevated surfaces; selection is
+accent-based with a readability check at Talon's 40% highlight opacity.
 Desktop sync and its status live directly on each ship row. **+ urbit** sits
 beside the Ships heading.
 
@@ -221,7 +223,16 @@ python3 -B scripts/check-desktop.py
 ```
 
 The final command captures local appearance and validates generated Lua using
-Hyprland's config-only verifier, without applying it.
+Hyprland's config-only verifier, checks parsed gap values, and compares the
+capture with the cached shared profile, without applying it.
+
+Version 0.3.9 fixes received window gaps being silently set to zero by an
+incorrect Lua array representation. It uses named sides and verifies readback
+before reporting success. Old generated overrides are repaired on connected
+startup. Update all participating machines so older receivers and Talon bridges
+cannot reintroduce the old mappings. The Talon bridge now uses derived raised
+surfaces and an accent-based selection color instead of duplicate surface/raised
+values and a nearly invisible highlight.
 
 Version 0.3.2 fixes a first-sync failure on computers with large font collections:
 font availability checks query only the requested family rather than exceeding

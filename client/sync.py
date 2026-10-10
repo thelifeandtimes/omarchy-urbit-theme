@@ -19,12 +19,12 @@ import time
 try:
     from .eyre import Eyre
     from .native import ensure_hooks
-    from .profile import DESK, Desktop, atomic, content, digest, palette, read_remote, validate
+    from .profile import DESK, Desktop, application_mismatches, atomic, content, digest, palette, read_remote, validate, verify_application
     from .support import Failure, Keyring, StateStore, command, dumps, loads
 except ImportError:
     from eyre import Eyre
     from native import ensure_hooks
-    from profile import DESK, Desktop, atomic, content, digest, palette, read_remote, validate
+    from profile import DESK, Desktop, application_mismatches, atomic, content, digest, palette, read_remote, validate, verify_application
     from support import Failure, Keyring, StateStore, command, dumps, loads
 
 
@@ -118,11 +118,12 @@ class Coordinator:
         validate(current)
         needs_apply = s["applying"] is not None or (s["observed"] or {}).get("updateId") != current["updateId"] or self.first
         if needs_apply:
-            if s["applying"] is not None or digest(current) != digest(local):
+            if s["applying"] is not None or application_mismatches(current, local) or (self.first and self.desktop.needs_repair()):
                 s["applying"] = current
                 self.save()  # Font application may restart our owning shell.
                 self.desktop.apply(current)
                 local = self.desktop.capture(s["deviceId"])
+            verify_application(current, local)
             s.update(observed=current, baseline=digest(local), applying=None)
             self.save()
         self.first = False

@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from client.eyre import Eyre, entries, merge, publish
 from client.main import Helper
 from client.support import (Failure, Keyring, PLUGIN_ID, StateStore, account, command,
-                            dumps, empty_record, fingerprint, loads, origin, resolve_palette)
+                            dumps, empty_record, fingerprint, loads, origin, resolve_palette, talon_palette)
 
 
 PALETTE = dict(id=PLUGIN_ID, name="Test Theme", dark=True, primary="#ABCDEF",
@@ -195,7 +195,7 @@ class PaletteTests(unittest.TestCase):
         self.assertEqual(set(palette), set(PALETTE) | {"text", "muted", "raised", "error", "selection", "link"})
         self.assertEqual(palette, dict(id=PLUGIN_ID, name="My Theme", dark=True, primary="#AABBCC",
                                       secondary="#123ABC", tertiary="#ABC123", background="#112233", surface="#223344",
-                                      text="#AABBCC", muted="", raised="#223344", error="", selection="", link="#123ABC"))
+                                      text="#AABBCC", muted="", raised="", error="", selection="#5F7081", link="#123ABC"))
 
     def test_optional_fallbacks(self):
         palette = resolve_palette(self.home, self.runner)
@@ -337,6 +337,19 @@ class EyreTests(unittest.TestCase):
     def setUp(self):
         self.server = FakeEyre()
         self.addCleanup(self.server.close)
+
+    def test_new_mapping_explicitly_clears_old_raised_override_on_ship(self):
+        other = dict(PALETTE, id="unrelated", raised="#334455")
+        old = dict(PALETTE, raised=PALETTE["surface"], selection="#333333")
+        self.server.body["desk"]["ui-prefs"]["themes"] = dumps({"themes": [other, old], "activeId": PLUGIN_ID})
+        desired = talon_palette({"mode": "dark", "background": "#111111", "foreground": "#EEEEEE",
+                                 "lighter_background": "#222222", "accent": "#ABCDEF"}, "New mapping")
+        publish(self.server.client(), desired)
+        saved = entries(self.server.body)["themes"]["themes"]
+        self.assertEqual(saved[0], other)
+        self.assertIn("raised", saved[1])
+        self.assertEqual(saved[1]["raised"], "")
+        self.assertEqual(saved[1]["selection"], desired["selection"])
 
     def test_login_form_preserves_dashes_and_omits_redirect(self):
         session = Eyre(self.server.url).login(" +" + CODE + " ")

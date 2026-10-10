@@ -31,6 +31,10 @@ class FakeDesktop:
         self.value = copy.deepcopy(value)
         self.applications = []
         self.fail = False
+        self.repair = False
+
+    def needs_repair(self):
+        return self.repair
 
     def capture(self, device):
         return copy.deepcopy(self.value)
@@ -40,6 +44,7 @@ class FakeDesktop:
         if self.fail:
             raise Failure("missing-font", "Missing font")
         self.value = copy.deepcopy(value)
+        self.repair = False
 
 
 class MemoryHub:
@@ -190,6 +195,45 @@ class CoordinatorTests(unittest.TestCase):
         self.a.value = profile(color="#ABCDEF")
         self.step(self.ca, self.a, True)
         self.assertEqual(self.hub.value["future"], {"example": 123})
+
+    def test_bad_gap_readback_stays_pending_without_publishing_it(self):
+        self.join()
+        before = self.bd.load()
+        desired = profile(color="#ABCDEF")
+        self.hub.value = desired
+        original = self.b.apply
+
+        def broken(value):
+            original(value)
+            self.b.value["windows"]["general:gaps_out"] = {"css": "0 0 0 0"}
+
+        self.b.apply = broken
+        with self.assertRaises(Failure) as caught:
+            self.step(self.cb, self.b)
+        self.assertEqual(caught.exception.code, "application-mismatch")
+        self.assertIn("general:gaps_out", caught.exception.message)
+        self.assertEqual(self.bd.value["applying"], desired)
+        self.assertEqual(self.bd.value["observed"], before["observed"])
+        self.assertEqual(self.bd.value["baseline"], before["baseline"])
+        self.assertIsNone(self.bd.value["pending"])
+        self.assertEqual(self.hub.value, desired)
+        self.assertEqual(len(self.hub.writes), 1)
+        self.b.apply = original
+        self.step(self.cb, self.b)
+        self.assertIsNone(self.bd.value["applying"])
+        self.assertEqual(self.bd.value["observed"], desired)
+
+    def test_legacy_override_is_reapplied_once_even_if_values_currently_match(self):
+        self.join()
+        self.b.repair = True
+        self.cb = Coordinator(self.bd, self.b, self.hub)
+        before = len(self.b.applications)
+        self.step(self.cb, self.b)
+        self.assertEqual(len(self.b.applications), before + 1)
+        self.cb = Coordinator(self.bd, self.b, self.hub)
+        self.step(self.cb, self.b)
+        self.assertEqual(len(self.b.applications), before + 1)
+        self.assertEqual(len(self.hub.writes), 1)
 
 
 class LiveHub(http.server.ThreadingHTTPServer):

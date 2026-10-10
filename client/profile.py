@@ -14,13 +14,14 @@ import shutil
 import tempfile
 
 try:
-    from .support import Failure, command, dumps, fingerprint, hex_color, loads, validate_palette
+    from .support import Failure, command, dumps, fingerprint, hex_color, loads, talon_palette
 except ImportError:
-    from support import Failure, command, dumps, fingerprint, hex_color, loads, validate_palette
+    from support import Failure, command, dumps, fingerprint, hex_color, loads, talon_palette
 
 DESK = "omarchy-urbit-theme"
 PROFILE_LIMIT = 262144
 MANAGED_THEME = "urbit-synced"
+APPEARANCE_HEADER = "-- Network Theme appearance adapter 2\n"
 # These are data files, not terminal launch configuration or executable Lua.
 THEME_FILES = ("btop.theme", "chromium.theme", "helix.toml", "icons.theme", "keyboard.rgb",
                "obsidian.css", "vscode-theme.json", "pi.json", "claude.json", "hermes.yaml", "t3code.json")
@@ -43,6 +44,87 @@ def text(value, limit=1024):
 
 def slug(value):
     return isinstance(value, str) and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", value) and value != MANAGED_THEME
+
+
+def css_sides(value):
+    """Expand CSS shorthand into the named table Hyprland's Lua API expects.
+
+    An array is accepted by Hyprland but silently sets all sides to zero.
+    Keep this separate from vec2 and Bezier arrays, which really are arrays.
+    """
+    if not text(value, 100) or not re.fullmatch(r"-?\d+(?: +-?\d+){0,3}", value):
+        raise Failure("profile", "Window gaps must contain one to four integer values.")
+    parts = [int(v) for v in value.split()]
+    if any(abs(v) > 10000 for v in parts):
+        raise Failure("profile", "Window gaps exceed the supported range.")
+    if len(parts) == 1:
+        parts *= 4
+    elif len(parts) == 2:
+        parts *= 2
+    elif len(parts) == 3:
+        parts.append(parts[1])
+    return dict(zip(("top", "right", "bottom", "left"), parts))
+
+
+def _equivalent(a, b):
+    if type(a) is bool or type(b) is bool:
+        return type(a) is type(b) and a == b
+    if type(a) in (int, float) and type(b) in (int, float):
+        return math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-6)
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(_equivalent(x, y) for x, y in zip(a, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_equivalent(a[k], b[k]) for k in a)
+    if isinstance(a, str) and isinstance(b, str) and re.fullmatch(r"#[0-9a-fA-F]{6,8}", a):
+        return a.lower() == b.lower()
+    return a == b
+
+
+def _window_value(wrapped):
+    kind, value = next(iter(wrapped.items()))
+    if kind == "css":
+        return css_sides(value)
+    if kind == "gradient":
+        parts = value.split()
+        return ([p.lower() for p in parts[:-1]], float(parts[-1][:-3]) % 360)
+    return value
+
+
+def application_mismatches(expected, actual):
+    """Compare requested values, allowing unrelated local/default extra fields.
+
+    This deliberately does not compare IDs or claim pixel-identical rendering.
+    Machine-level shell text zoom is outside the captured theme layer.
+    """
+    failures = []
+    for key in ("theme", "font"):
+        a, b = expected.get(key), actual.get(key)
+        if not (isinstance(a, str) and isinstance(b, str) and (a.casefold() == b.casefold() if key == "font" else a == b)):
+            failures.append(key)
+    for group in ("colors", "shell", "files", "windows"):
+        observed = actual.get(group, {})
+        for key, value in expected.get(group, {}).items():
+            if key not in observed:
+                failures.append(group + "." + key)
+            elif not _equivalent(_window_value(value) if group == "windows" else value,
+                                 _window_value(observed[key]) if group == "windows" else observed[key]):
+                failures.append(group + "." + key)
+    for group in ("curves", "rules"):
+        observed = {entry["name"]: entry for entry in actual.get("animations", {}).get(group, [])}
+        for entry in expected.get("animations", {}).get(group, []):
+            if entry["name"] not in observed or not _equivalent(entry, observed[entry["name"]]):
+                failures.append("animations." + group + "." + entry["name"])
+    return failures
+
+
+def verify_application(expected, actual):
+    failures = application_mismatches(expected, actual)
+    if failures:
+        fields = ", ".join(failures[:4])[:300]
+        if len(failures) > 4:
+            fields += " (and more)"
+        raise Failure("application-mismatch", "Appearance readback differs for " + fields
+                      + ". The shared profile remains pending; check local overrides and retry.", True)
 
 
 def atomic(path, data):
@@ -102,15 +184,7 @@ def theme_receipt(directory):
 
 
 def palette(profile):
-    c = profile["colors"]
-    primary = c.get("accent") or c.get("blue") or c["foreground"]
-    result = dict(id=DESK, name=profile["theme"], dark=c["mode"] == "dark", primary=primary,
-                  secondary=c.get("blue") or primary, tertiary=c.get("green") or c.get("blue") or primary,
-                  background=c["background"], surface=c.get("lighter_background") or c["background"])
-    for key, source in zip(("text", "muted", "raised", "error", "selection", "link"),
-                           ("foreground", "muted", "lighter_background", "red", "selection", "blue")):
-        result[key] = c.get(source, "")
-    return validate_palette(result)
+    return talon_palette(profile["colors"], profile["theme"])
 
 
 def content(profile):
@@ -161,7 +235,8 @@ def validate(profile):
         elif kind == "vec2":
             valid = isinstance(v, list) and len(v) == 2 and all(type(n) in (int, float) and math.isfinite(n) and abs(n) <= 10000 for n in v)
         elif kind == "css":
-            valid = text(v, 100) and re.fullmatch(r"-?\d+(?:\.\d+)?(?: +-?\d+(?:\.\d+)?){0,3}", v)
+            css_sides(v)
+            valid = True
         elif kind == "gradient":
             valid = text(v, 1024) and re.fullmatch(r"(?:[0-9a-fA-F]{8} +)+-?\d+(?:\.\d+)?deg", v)
         elif kind == "str":
@@ -223,7 +298,7 @@ def window_lua(profile):
         elif option in ("group:groupbar:text_color", "group:groupbar:text_color_inactive"):
             value = "rgba(" + format(int(value) & 0xffffff, "06x") + format((int(value) >> 24) & 255, "02x") + ")"
         elif kind == "css":
-            value = [float(v) for v in value.split()]
+            value = css_sides(value)
         target = tree
         parts = option.replace(".", ":").split(":")
         for part in parts[:-1]:
@@ -243,6 +318,10 @@ class Desktop:
         self.home = Path(home or Path.home())
         self.current = self.home / ".local/state/omarchy/current"
         self.runner = runner
+
+    def needs_repair(self):
+        path = self.home / ".local/state/omarchy-urbit-theme/appearance.lua"
+        return path.is_file() and not path.read_text().startswith(APPEARANCE_HEADER)
 
     @staticmethod
     def command_label(args):
@@ -380,7 +459,7 @@ class Desktop:
         # replacing it. Its guard stops it overriding a different local theme.
         state = self.home / ".local/state/omarchy-urbit-theme"
         code = window_lua(profile)
-        guarded = ('local f=io.open(os.getenv("HOME").."/.local/state/omarchy/current/theme.name","r")\n'
+        guarded = (APPEARANCE_HEADER + 'local f=io.open(os.getenv("HOME").."/.local/state/omarchy/current/theme.name","r")\n'
                    'local n=f and f:read("*l"); if f then f:close() end\n'
                    'if n==' + lua(name) + ' then\n' + code + 'end\n')
         atomic(state / "appearance.lua", guarded)

@@ -19,7 +19,7 @@ PLUGIN_ID = "omarchy-urbit-theme"
 NODE = shutil.which("node")
 PALETTE = dict(id=PLUGIN_ID, name="Process Fixture", dark=True, primary="#ABCDEF",
                secondary="#334455", tertiary="#667788", background="#111111", surface="#222222",
-               text="#EEEEEE", muted="", raised="#222222", error="", selection="", link="#334455")
+               text="#EEEEEE", muted="", raised="", error="", selection="#ABCDEF", link="#334455")
 
 # This executable is a test double, NOT a plaintext keyring implementation.
 # It accepts only the exact synthetic session issued by this test's FakeEyre.

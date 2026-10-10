@@ -158,6 +158,57 @@ def hex_color(value):
     return value.upper()
 
 
+def mix_color(foreground, background, alpha):
+    """sRGB compositing, including Talon's 40%-opaque text highlight."""
+    front = [int(foreground[i:i + 2], 16) for i in (1, 3, 5)]
+    back = [int(background[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(a * alpha + b * (1 - alpha)):02X}" for a, b in zip(front, back))
+
+
+def contrast_ratio(first, second):
+    def luminance(color):
+        channels = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+        return sum(c * weight for c, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+    low, high = sorted((luminance(first), luminance(second)))
+    return (high + 0.05) / (low + 0.05)
+
+
+def selection_color(accent, background, surface, foreground):
+    # Omarchy's selection is an already-subdued background. Talon applies
+    # another 0.4 alpha, so use the accent instead. Attenuate only if necessary
+    # to keep body text readable on both base backgrounds after compositing.
+    # A theme with low-contrast text keeps its existing contrast as the target.
+    minimum = min(4.5, contrast_ratio(foreground, background), contrast_ratio(foreground, surface))
+    for percent in range(100, -1, -1):
+        candidate = mix_color(accent, surface, percent / 100)
+        if all(contrast_ratio(foreground, mix_color(candidate, base, 0.4)) >= minimum - 1e-6
+               for base in (background, surface)):
+            return candidate
+    return surface
+
+
+def talon_palette(colors, name):
+    """Single mapping for both local preview and shared-profile publication."""
+    background = hex_color(colors.get("background"))
+    foreground = hex_color(colors.get("foreground"))
+    primary = hex_color(colors.get("accent") or colors.get("blue") or foreground)
+    secondary = hex_color(colors.get("blue") or primary)
+    tertiary = hex_color(colors.get("green") or secondary)
+    surface = hex_color(colors.get("lighter_background") or background)
+    mode = colors.get("mode")
+    if mode not in ("dark", "light"):
+        raise Failure("palette", "Omarchy did not resolve a valid theme mode.", True)
+    result = dict(id=PLUGIN_ID, name=name, dark=mode == "dark", primary=primary,
+                  secondary=secondary, tertiary=tertiary, background=background, surface=surface,
+                  text=foreground, raised="", selection=selection_color(primary, background, surface, foreground))
+    for key, source in (("muted", "muted"), ("error", "red"), ("link", "blue")):
+        result[key] = hex_color(colors[source]) if colors.get(source) else ""
+    # Explicit Auto clears old raised overrides; omitting it would retain the
+    # incorrect surface-colored value on clients that keep local extras.
+    return validate_palette(result)
+
+
 def resolve_palette(home=None, runner=command):
     current = Path(home or Path.home()) / ".local/state/omarchy/current"
     result, raw = runner(["omarchy", "theme", "color", "--file",
@@ -180,20 +231,7 @@ def resolve_palette(home=None, runner=command):
             raise ValueError()
     except (OSError, UnicodeError, ValueError):
         raise Failure("palette", "The current Omarchy theme is unavailable or invalid.", True) from None
-    background = hex_color(colors.get("background"))
-    foreground = hex_color(colors.get("foreground"))
-    primary = hex_color(colors.get("accent") or colors.get("blue") or foreground)
-    secondary = hex_color(colors.get("blue") or primary)
-    tertiary = hex_color(colors.get("green") or secondary)
-    surface = hex_color(colors.get("lighter_background") or background)
-    mode = colors.get("mode")
-    if mode not in ("dark", "light"):
-        raise Failure("palette", "Omarchy did not resolve a valid theme mode.", True)
-    palette = dict(id=PLUGIN_ID, name=name, dark=mode == "dark", primary=primary,
-                   secondary=secondary, tertiary=tertiary, background=background, surface=surface)
-    for key, source in zip(EXTRA_COLORS, ("foreground", "muted", "lighter_background", "red", "selection", "blue")):
-        palette[key] = hex_color(colors[source]) if colors.get(source) else ""
-    return palette
+    return talon_palette(colors, name)
 
 
 def fingerprint(palette):
