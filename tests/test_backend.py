@@ -338,15 +338,17 @@ class EyreTests(unittest.TestCase):
         self.server = FakeEyre()
         self.addCleanup(self.server.close)
 
-    def test_new_mapping_explicitly_clears_old_raised_override_on_ship(self):
-        other = dict(PALETTE, id="unrelated", raised="#334455")
-        old = dict(PALETTE, raised=PALETTE["surface"], selection="#333333")
+    def test_new_mapping_explicitly_clears_old_muted_and_raised_overrides_on_ship(self):
+        other = dict(PALETTE, id="unrelated", muted="#ABCDEF", raised="#334455")
+        old = dict(PALETTE, muted="#475258", raised=PALETTE["surface"], selection="#333333")
         self.server.body["desk"]["ui-prefs"]["themes"] = dumps({"themes": [other, old], "activeId": PLUGIN_ID})
         desired = talon_palette({"mode": "dark", "background": "#111111", "foreground": "#EEEEEE",
-                                 "lighter_background": "#222222", "accent": "#ABCDEF"}, "New mapping")
+                                 "lighter_background": "#222222", "accent": "#ABCDEF", "muted": "#475258"}, "New mapping")
         publish(self.server.client(), desired)
         saved = entries(self.server.body)["themes"]["themes"]
         self.assertEqual(saved[0], other)
+        self.assertIn("muted", saved[1])
+        self.assertEqual(saved[1]["muted"], "")
         self.assertIn("raised", saved[1])
         self.assertEqual(saved[1]["raised"], "")
         self.assertEqual(saved[1]["selection"], desired["selection"])

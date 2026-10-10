@@ -38,7 +38,8 @@ class ProfileTests(unittest.TestCase):
         p = profile()
         t = palette(p)
         self.assertEqual([t[k] for k in ("text", "muted", "raised", "error", "selection", "link")],
-                          ["#EEEEEE", "#888888", "", "#EE3333", "#123ABC", "#123ABC"])
+                          ["#EEEEEE", "", "", "#EE3333", "#123ABC", "#123ABC"])
+        self.assertEqual(p["colors"]["muted"], "#888888")
         for key in ("muted", "lighter_background", "red", "selection", "blue"):
             del p["colors"][key]
         t = palette(p)

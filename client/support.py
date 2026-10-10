@@ -201,11 +201,11 @@ def talon_palette(colors, name):
         raise Failure("palette", "Omarchy did not resolve a valid theme mode.", True)
     result = dict(id=PLUGIN_ID, name=name, dark=mode == "dark", primary=primary,
                   secondary=secondary, tertiary=tertiary, background=background, surface=surface,
-                  text=foreground, raised="", selection=selection_color(primary, background, surface, foreground))
-    for key, source in (("muted", "muted"), ("error", "red"), ("link", "blue")):
+                   text=foreground, muted="", raised="", selection=selection_color(primary, background, surface, foreground))
+    for key, source in (("error", "red"), ("link", "blue")):
         result[key] = hex_color(colors[source]) if colors.get(source) else ""
-    # Explicit Auto clears old raised overrides; omitting it would retain the
-    # incorrect surface-colored value on clients that keep local extras.
+    # Explicit Auto clears old muted/raised overrides. Omitting these keys would
+    # retain the dim text and flat surfaces on clients that keep local extras.
     return validate_palette(result)
 
 

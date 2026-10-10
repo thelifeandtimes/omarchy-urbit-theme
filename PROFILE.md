@@ -119,9 +119,11 @@ The plugin maps the superset into `talon/ui-prefs/themes`, keeping the existing
 stable `omarchy-urbit-theme` ID and unrelated saved themes. It also disables the
 separate accent override. Preview and publication share one mapping function.
 The original five-color mapping remains, including surface=lighter_background
-(fallback background). Extras are explicit: text=foreground, muted=muted,
-error=red, link=blue, and raised=`""` (Talon Auto). This restores Talon's derived
-raised-surface ramp instead of flattening it to the normal surface color.
+(fallback background). Extras are explicit: text=foreground, error=red,
+link=blue, and muted=raised=`""` (Talon Auto). Talon derives secondary text from
+the foreground/surface pair and generates its raised-surface ramp. This avoids
+using a subdued desktop shade as enabled text or flattening raised surfaces to
+the normal surface color. The shared Omarchy `muted` value remains intact.
 
 Selection is accent-based rather than copying Omarchy's already-subdued
 selection background: Talon composites the input at 40% opacity. When needed,
@@ -132,9 +134,9 @@ This checks the sRGB composite; cards and other Material-specific surfaces
 still need client visual acceptance. The stored Omarchy palette is not modified.
 
 An unavailable extra is `""` (Auto), never a missing key that would retain a
-client's old override. Auto raised is always explicit so the old duplicate
-surface override is cleared on every Talon client. The palette preview labels
-it Auto rather than pretending the input string is a rendered Material color.
+client's old override. Auto muted and raised are always explicit so old overrides
+are cleared on every Talon client. The palette preview labels a derived value
+Auto rather than pretending the input string is a rendered Material color.
 
 Talon rc74 does not consume font, geometry, or effect fields. Those values are
 available to future consumers, but storing them does not change existing apps.
