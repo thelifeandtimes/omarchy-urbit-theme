@@ -56,6 +56,46 @@ class InstallTest(unittest.TestCase):
         for name in installer.FILES:
             self.assertEqual((self.target / name).read_bytes(), (ROOT / name).read_bytes())
 
+    def test_snapshot_contains_importable_appearance_owner_and_accepts_prior_inventory(self):
+        self.install()
+        self.assertTrue((self.target / 'client/appearance.py').is_file())
+        result = subprocess.run([sys.executable, '-B', '-c', 'from client.appearance import Ownership; from client.profile import Desktop; from client.checkpoints import Checkpoints; from client.transport_journal import TransportJournal'],
+                                cwd=self.target, env={'HOME': str(self.home), 'PATH': '/usr/bin:/bin', 'PYTHONDONTWRITEBYTECODE': '1'},
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt_path = self.target / installer.MARKER
+        receipt = json.loads(receipt_path.read_text())
+        for name in set(installer.FILES) - set(installer.DECLARATION_FILES):
+            (self.target / name).unlink()
+            del receipt['files'][name]
+        receipt_path.write_text(json.dumps(receipt))
+        self.assertEqual(set(installer.inspect(self.target, self.hook)['files']), set(installer.DECLARATION_FILES))
+        self.install(replace=True)
+        self.assertEqual(set(installer.inspect(self.target, self.hook)['files']), set(installer.FILES))
+
+    def test_prior_checkpoint_inventory_upgrades_to_transport_module(self):
+        self.install()
+        path=self.target/installer.MARKER
+        receipt=json.loads(path.read_text())
+        for name in set(installer.FILES)-set(installer.CHECKPOINT_FILES):
+            (self.target/name).unlink();del receipt['files'][name]
+        path.write_text(json.dumps(receipt))
+        self.assertEqual(set(installer.inspect(self.target,self.hook)['files']),set(installer.CHECKPOINT_FILES))
+        self.install(replace=True)
+        self.assertTrue((self.target/'client/transport_journal.py').is_file())
+
+    def test_prior_transport_inventory_gains_header_components(self):
+        self.install()
+        path=self.target/installer.MARKER
+        receipt=json.loads(path.read_text())
+        for name in set(installer.FILES)-set(installer.TRANSPORT_FILES):
+            (self.target/name).unlink();del receipt['files'][name]
+        path.write_text(json.dumps(receipt))
+        self.assertEqual(set(installer.inspect(self.target,self.hook)['files']),set(installer.TRANSPORT_FILES))
+        self.install(replace=True)
+        self.assertTrue((self.target/'PluginHeader.qml').is_file())
+        self.assertTrue((self.target/'ConnectionChoices.qml').is_file())
+
     def test_enable_is_explicit(self):
         self.install(enable=True)
         self.assertEqual(self.calls[-2:], [
@@ -189,11 +229,24 @@ class InstallTest(unittest.TestCase):
         self.install()
         receipt_path = self.target / installer.MARKER
         receipt = json.loads(receipt_path.read_text())
-        (self.target / "ThemeIcon.qml").unlink()
-        del receipt["files"]["ThemeIcon.qml"]
+        for name in set(installer.FILES) - set(installer.NATIVE_FILES):
+            (self.target / name).unlink()
+            del receipt["files"][name]
         receipt_path.write_text(json.dumps(receipt))
         self.install(replace=True)
         self.assertTrue((self.target / "ThemeIcon.qml").is_file())
+
+
+    def test_upgrade_from_icon_snapshot_adds_receiver_inventory(self):
+        self.install()
+        receipt_path = self.target / installer.MARKER
+        receipt = json.loads(receipt_path.read_text())
+        for name in set(installer.FILES) - set(installer.ICON_FILES):
+            (self.target / name).unlink()
+            del receipt["files"][name]
+        receipt_path.write_text(json.dumps(receipt))
+        self.install(replace=True)
+        self.assertEqual(set(installer.inspect(self.target, self.hook)["files"]), set(installer.FILES))
 
 
 if __name__ == "__main__":

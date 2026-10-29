@@ -2,11 +2,14 @@
   "schemaVersion": 1,
   "id": "thelifeandtimes.urbit-theme",
   "name": "Network Theme",
-  "version": "0.3.10",
+  "version": "0.4.0",
   "author": "Stuart Christoph",
   "license": "MIT",
   "description": "Share a full Omarchy appearance profile across computers through Urbit settings, with an eleven-color Talon bridge.",
-  "kinds": ["service", "bar-widget"],
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
   "keepLoaded": true,
   "entryPoints": {
     "service": "Service.qml",
@@ -16,7 +19,11 @@
     "displayName": "Network Theme",
     "description": "Preview the shared palette and select desktop sync directly on each ship.",
     "category": "Appearance",
-    "aliases": ["urbit", "ship-theme", "network-theme"],
+    "aliases": [
+      "urbit",
+      "ship-theme",
+      "network-theme"
+    ],
     "allowMultiple": false,
     "defaultSection": "right"
   }

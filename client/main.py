@@ -13,10 +13,12 @@ import sys
 
 try:
     from .eyre import Eyre, entries, publish
+    from .transport_journal import TransportJournal
     from .support import (Failure, Keyring, StateStore, empty_ship,
                           fingerprint, loads, dumps, origin, resolve_palette, validate_palette)
 except ImportError:
     from eyre import Eyre, entries, publish
+    from transport_journal import TransportJournal
     from support import (Failure, Keyring, StateStore, empty_ship,
                          fingerprint, loads, dumps, origin, resolve_palette, validate_palette)
 
@@ -41,11 +43,21 @@ class Helper:
         return next((row for row in record["ships"]
                      if expected == {k: row[k] for k in ("id", "url", "ship")}), None)
 
-    def cleanup(self, state):
+    def client(self, url, session=None):
+        client = self.transport(url, session)
+        if isinstance(client, Eyre):
+            client.journal = TransportJournal(self.store.root)
+        return client
+
+    def cleanup(self, state, client=None):
         remote_failed = keyring_failed = False
         try:
-            session = self.keyring.lookup(state["url"], state["ship"])
-            self.transport(state["url"], session).logout()
+            if client is None:
+                session = self.keyring.lookup(state["url"], state["ship"], check_expiry=False)
+                client = self.client(state["url"], session)
+            if client.session is None:
+                raise Failure("keyring", "The saved session is unavailable.")
+            client.logout()
         except Exception:
             remote_failed = True
         finally:
@@ -84,7 +96,7 @@ class Helper:
                 raise Failure("duplicate-origin", "This ship origin has already been added.")
             if len(record["ships"]) >= 64:
                 raise Failure("ship-limit", "Remove a ship before adding another; the limit is 64 ships.")
-            session = self.transport(url).login(value.get("code"))
+            session = self.client(url).login(value.get("code"))
             self.keyring.store(url, session)
             state = dict(empty_ship(), id=secrets.token_hex(32), url=url, ship=session["ship"],
                          automatic=True, pending=True, fingerprint="")
@@ -99,16 +111,24 @@ class Helper:
                 raise
             return None
         if action == "disconnect":
-            record["ships"].remove(state)
-            try:
-                # Commit forgetting first. Cleanup never resurrects a removed row.
-                self.save(record)
-            except Failure:
-                with contextlib.suppress(Exception):
-                    if not any(row["id"] == state["id"] for row in self.store.load()["ships"]):
-                        self.cleanup(state)
-                raise
-            self.cleanup(state)
+            # Stop automatic work without forgetting the row or its credential.
+            # A failed cleanup remains an explicit retry of this same account.
+            state.update(automatic=False, pending=False)
+            self.save(record)
+            session = None
+            with contextlib.suppress(Exception):
+                session = self.keyring.lookup(state["url"], state["ship"], check_expiry=False)
+            client = self.client(state["url"], session)
+            with client.disconnecting():
+                record["ships"].remove(state)
+                try:
+                    self.save(record)
+                except Failure:
+                    with contextlib.suppress(Exception):
+                        if not any(row["id"] == state["id"] for row in self.store.load()["ships"]):
+                            self.cleanup(state, client)
+                    raise
+                self.cleanup(state, client)
             return None
         if action == "set-auto":
             if type(value.get("enabled")) is not bool:
@@ -135,13 +155,13 @@ class Helper:
                 state["pending"] = False
                 self.save(record)
                 session = self.keyring.lookup(state["url"], state["ship"])
-                entries(self.transport(state["url"], session).scry())
+                entries(self.client(state["url"], session).scry())
                 if state["lastError"]:
                     state["lastError"] = ""
                     self.save(record)
                 return palette
             session = self.keyring.lookup(state["url"], state["ship"])
-            publish(self.transport(state["url"], session), palette)
+            publish(self.client(state["url"], session), palette, renotify=force)
             state.update(pending=False, authenticationRequired=False, lastError="",
                          lastPublished=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                          lastTheme=palette["name"], fingerprint=digest)

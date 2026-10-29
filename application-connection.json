@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "runtime": "python3",
+  "authority": "eyre-owner-session",
+  "entry": "client/application_connection.py",
+  "files": [
+    "manifest.json",
+    "application-connection.json",
+    "client/application_connection.py",
+    "client/instance.py",
+    "client/connection_offer.py",
+    "client/connection_journal.py",
+    "client/support.py",
+    "client/eyre.py",
+    "client/transport_journal.py"
+  ]
+}

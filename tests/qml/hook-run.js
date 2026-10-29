@@ -1,4 +1,4 @@
-// Real hook -> installed omarchy-shell -> qs IPC -> real Service, never the desktop.
+// Real hooks queue owner-bound intent; explicit legacy IPC remains separately tested.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -134,10 +134,33 @@ async function run() {
       stream.on("data", data => { shellOutput = (shellOutput + data).slice(-32768); });
     healthy(await waitFor(s => s.ready), 0, 1);
 
+    // Missing helpers must not trigger the old parallel publication path.
     await hook();
+    healthy(JSON.parse(await ipc("snapshot")), 0, 1);
+    const installed = path.join(environment.HOME, ".config/omarchy/plugins/thelifeandtimes.urbit-theme");
+    fs.mkdirSync(installed, { recursive: true });
+    fs.cpSync(path.join(root, "client"), path.join(installed, "client"), { recursive: true });
+    fs.copyFileSync(path.join(root, "manifest.json"), path.join(installed, "manifest.json"));
+    const claim = await command("python3", ["-B", "-c",
+      "import sys; sys.path.insert(0,sys.argv[1]); from client.appearance import Ownership\nwith Ownership().hold(): pass", installed]);
+    assert.equal(claim.code, 0, claim.stderr);
+    await hook();
+    const noticePath = path.join(environment.XDG_STATE_HOME, "omarchy-urbit-theme/appearance-notify.json");
+    const notice = JSON.parse(fs.readFileSync(noticePath, "utf8"));
+    assert.equal(notice.theme, true);
+    assert.match(notice.selection, /^[a-f0-9]{32}$/);
+    healthy(JSON.parse(await ipc("snapshot")), 0, 1);
+    const active = path.join(environment.HOME, ".local/state/omarchy-urbit-theme-ownership/active");
+    fs.writeFileSync(active, "Network Theme owner 1\nomarchy-urbit-theme.dev\n" + "a".repeat(32) + "\n");
+    const before = fs.readFileSync(noticePath, "utf8");
+    await hook();
+    assert.equal(fs.readFileSync(noticePath, "utf8"), before, "inactive hook changed intent");
+    healthy(JSON.parse(await ipc("snapshot")), 0, 1);
+    // Manual IPC remains a supported diagnostic; hooks no longer invoke it.
+    assert.equal((await command(wrapper, ["urbit-theme", "themeChanged"])).code, 0);
     healthy(await waitFor(s => s.ready && s.generation === 1), 1, 2);
     // A burst must deliver both IPC calls but launch only one debounced preview.
-    await Promise.all([hook(), hook()]);
+    await Promise.all([command(wrapper, ["urbit-theme", "themeChanged"]), command(wrapper, ["urbit-theme", "themeChanged"])]);
     healthy(await waitFor(s => s.ready && s.generation === 3), 3, 3);
     await new Promise(resolve => setTimeout(resolve, 750));
     healthy(JSON.parse(await ipc("snapshot")), 3, 3);
@@ -157,7 +180,7 @@ async function run() {
     assert.equal(stopped.code, 0);
     await hook(); // No shell at all is also a bounded, silent success.
     assert.doesNotMatch(shellOutput, /FIXTURE_STDERR|ERROR|ReferenceError|TypeError/);
-    process.stdout.write("Real hook IPC: repository hook -> installed omarchy-shell -> qs ipc -> Service IpcHandler passed; single/burst debounce, usable shell, missing service/shell exit 0 verified\n");
+    process.stdout.write("Owner-bound real hook queues without IPC; inactive hook is silent; explicit Service IPC single/burst debounce and missing service/shell checks passed\n");
   } catch (error) {
     if (shellOutput) process.stderr.write(shellOutput);
     throw error;

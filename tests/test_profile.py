@@ -278,16 +278,18 @@ class DesktopTests(unittest.TestCase):
         with self.assertRaises(Failure):
             Desktop(self.home, self.runner).apply(profile())
 
-    def test_old_generated_override_is_detected_and_repaired(self):
+    def test_unreceipted_override_is_detected_and_preserved(self):
         d = Desktop(self.home, self.runner)
         self.assertFalse(d.needs_repair())
         path = self.home / ".local/state/omarchy-urbit-theme/appearance.lua"
         path.parent.mkdir(parents=True)
         path.write_text('hl.config({general={gaps_out={10,10,10,10}}})\n')
         self.assertTrue(d.needs_repair())
-        d.apply(profile())
-        self.assertTrue(path.read_text().startswith(APPEARANCE_HEADER))
-        self.assertFalse(d.needs_repair())
+        before = path.read_bytes()
+        with self.assertRaises(Failure):
+            d.apply(profile())
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(self.calls, [])
 
     def test_large_font_catalog_does_not_prevent_shared_profile_application(self):
         # Reproduce the affected machine's 116,124-byte listing through the real

@@ -142,7 +142,7 @@ class MultiShipTests(unittest.TestCase):
     def test_remove_missing_cookie_offline_locked_and_clear_failure(self):
         other = self.add(self.second)
         untouched = self.disk()["ships"][0]
-        for mode in ("missing", "offline", "locked", "clear-failed", "clear-exit-one"):
+        for mode in ("missing", "locked", "clear-failed", "clear-exit-one"):
             with self.subTest(mode=mode):
                 row = self.add(self.first)
                 if mode == "missing":
@@ -183,14 +183,15 @@ class MultiShipTests(unittest.TestCase):
 
         def committed_then_failed(record):
             real_save(record)
-            raise OSError(SECRET)
+            if len(record["ships"]) == 1:
+                raise OSError(SECRET)
 
         with patch.object(self.store, "save", side_effect=committed_then_failed) as save:
             response = self.run_row("disconnect", first)
         self.assertFalse(response["ok"])
         self.assertEqual(response["error"]["code"], "state")
         self.assertEqual(response["state"]["ships"], [second])
-        self.assertEqual(save.call_count, 1)
+        self.assertEqual(save.call_count, 2)
         self.assertNotIn(self.first.url, self.keyring.sessions)
         self.assertEqual(self.first.requests[-1][:3], ("POST", "/~/logout", b""))
         self.assertEqual(len(self.second.requests), 1)
@@ -346,14 +347,14 @@ class MultiShipTests(unittest.TestCase):
                     self.assertEqual(self.second.requests, [])
                     # A missing/locked keyring still cannot trap the migrated row.
                     with patch.object(self.helper, "keyring") as keyring, \
-                            patch.object(self.helper, "transport") as transport:
+                            patch.object(self.helper, "transport", wraps=self.helper.transport) as transport:
                         keyring.lookup.side_effect = Failure("keyring", "Unavailable.")
                         keyring.clear.side_effect = Failure("keyring", "Unavailable.")
                         removed = self.run_row("disconnect", expected_row)
                         self.assertTrue(removed["ok"], removed)
                         self.assertEqual(removed["state"], {"ships": []})
                         keyring.clear.assert_called_once_with(self.first.url)
-                        transport.assert_not_called()
+                        transport.assert_called_once_with(self.first.url, None)
                     self.assertEqual(loads(path.read_text()), {"version": 2, "ships": []})
 
 

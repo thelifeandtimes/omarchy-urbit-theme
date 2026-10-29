@@ -1,0 +1,99 @@
+{
+  "channels": [
+    {
+      "channel": "afb681a8758a4d369509da890f0fbcc8",
+      "cleanup_actor": {
+        "boot": "06bff01d-9b29-4e28-8eef-72ead7c80e3f",
+        "id": "02bb01d14f784afcb66db2893fbc0ffc",
+        "namespace": "pid:[4026535599]",
+        "pid": 23,
+        "start": "27581508"
+      },
+      "cleanup_released": true,
+      "cleanup_request": "4fb3991fc8454744875079092e104076",
+      "delete_status": 204,
+      "id": "b5efd25394fe4cf4ab76bda7524ae984",
+      "intent": null,
+      "kind": "watch",
+      "origin": "http://127.0.0.1:39521",
+      "outcome": "none",
+      "owner": {
+        "boot": "06bff01d-9b29-4e28-8eef-72ead7c80e3f",
+        "id": "02bb01d14f784afcb66db2893fbc0ffc",
+        "namespace": "pid:[4026535599]",
+        "pid": 23,
+        "start": "27581508"
+      },
+      "owner_released": true,
+      "phase": "closed",
+      "session_ref": "8b9e0b0bb05062a379c286e659b33ce021ea379ad9ab9655f2d455ca4b77af09",
+      "ship": "~zod"
+    },
+    {
+      "channel": "452fc3c7846e498eb346b843b05b0b2e",
+      "cleanup_actor": {
+        "boot": "06bff01d-9b29-4e28-8eef-72ead7c80e3f",
+        "id": "1eb167d872a04deebeb795cb0a0cab73",
+        "namespace": "pid:[4026535599]",
+        "pid": 54,
+        "start": "27581549"
+      },
+      "cleanup_released": true,
+      "cleanup_request": "090227c4a94a4fb2a5c38449d558c6a6",
+      "delete_status": 204,
+      "id": "4c642bebd1544bf5a28fae5a1526af6b",
+      "intent": {
+        "bucket": "ui-prefs",
+        "desk": "talon",
+        "entry": "themes",
+        "value": "df8e8ffe498a929fd0fd5471b3f3321106e35421da7a312ba1484535765dfb17"
+      },
+      "kind": "poke",
+      "origin": "http://127.0.0.1:39521",
+      "outcome": "state-confirmed",
+      "owner": {
+        "boot": "06bff01d-9b29-4e28-8eef-72ead7c80e3f",
+        "id": "adb5fb44d6d24d7fadfbdc9343af88e6",
+        "namespace": "pid:[4026535599]",
+        "pid": 35,
+        "start": "27581529"
+      },
+      "owner_released": false,
+      "phase": "closed",
+      "session_ref": "8b9e0b0bb05062a379c286e659b33ce021ea379ad9ab9655f2d455ca4b77af09",
+      "ship": "~zod"
+    },
+    {
+      "channel": "cb755d8d33b642e28ef7d1baab20ff99",
+      "cleanup_actor": {
+        "boot": "06bff01d-9b29-4e28-8eef-72ead7c80e3f",
+        "id": "1eb167d872a04deebeb795cb0a0cab73",
+        "namespace": "pid:[4026535599]",
+        "pid": 54,
+        "start": "27581549"
+      },
+      "cleanup_released": true,
+      "cleanup_request": "7a9698563dca4a48b51e87a16d3c6a48",
+      "delete_status": 204,
+      "id": "b9b23fb3a18342559d7fc3f53f0e8223",
+      "intent": null,
+      "kind": "watch",
+      "origin": "http://127.0.0.1:39521",
+      "outcome": "none",
+      "owner": {
+        "boot": "06bff01d-9b29-4e28-8eef-72ead7c80e3f",
+        "id": "1eb167d872a04deebeb795cb0a0cab73",
+        "namespace": "pid:[4026535599]",
+        "pid": 54,
+        "start": "27581549"
+      },
+      "owner_released": true,
+      "phase": "closed",
+      "session_ref": "8b9e0b0bb05062a379c286e659b33ce021ea379ad9ab9655f2d455ca4b77af09",
+      "ship": "~zod"
+    }
+  ],
+  "plugin_id": "thelifeandtimes.urbit-theme.qualification-transport",
+  "profile": "qualification-transport",
+  "version": 1
+}

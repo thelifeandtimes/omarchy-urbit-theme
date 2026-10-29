@@ -88,6 +88,48 @@ class CoordinatorTests(unittest.TestCase):
         self.step(self.ca, self.a)
         self.step(self.cb, self.b)
 
+    def test_interrupted_other_profile_recovers_without_remote_write_or_losing_pending(self):
+        self.hub.value = profile("catppuccin", "#445566")
+        self.a.interrupted_transition = lambda: True
+        self.ca.intent(profile(color="#ABCDEF"))
+        pending = copy.deepcopy(self.ca.state["pending"])
+        self.ca.state.update(attempted=True, baseId="f" * 32)
+        self.ca.save()
+        local = self.ca.recover_local()
+        self.assertEqual(local, self.hub.value)
+        self.assertEqual(self.hub.writes, [])
+        self.assertEqual(self.ca.state["pending"], pending)
+        self.assertTrue(self.ca.state["attempted"])
+        self.assertEqual(self.ca.state["baseId"], "f" * 32)
+        self.assertIsNone(self.ad.value["applying"])
+
+    def test_interrupted_recovery_refuses_empty_offline_or_unrecognized_without_apply(self):
+        self.a.interrupted_transition = lambda: True
+        with self.assertRaises(Failure): self.ca.recover_local()
+        self.hub.offline = True
+        with self.assertRaises(Failure): self.ca.recover_local()
+        self.hub.offline = False; self.hub.value = profile()
+        self.a.interrupted_transition = lambda: False
+        with self.assertRaises(Failure): self.ca.recover_local()
+        self.assertEqual(self.a.applications, [])
+        self.assertEqual(self.hub.writes, [])
+        self.assertIsNone(self.ad.value["applying"])
+
+    def test_interrupted_recovery_retains_desired_state_when_apply_or_readback_fails(self):
+        self.hub.value = profile()
+        self.a.interrupted_transition = lambda: True
+        self.a.fail = True
+        with self.assertRaises(Failure): self.ca.recover_local()
+        self.assertEqual(self.ad.value["applying"], self.hub.value)
+        self.assertIsNone(self.ad.value["observed"])
+        self.a.fail = False
+        def wrong_capture(_): return profile(color="#FF0000")
+        self.a.capture = wrong_capture
+        with self.assertRaises(Failure): self.ca.recover_local()
+        self.assertEqual(self.ad.value["applying"], self.hub.value)
+        self.assertIsNone(self.ad.value["observed"])
+        self.assertEqual(self.hub.writes, [])
+
     def test_first_machine_seeds_second_adopts_without_stale_publication(self):
         original = self.a.value["updateId"]
         self.join()

@@ -10,7 +10,7 @@ import threading
 import time
 import unittest
 
-from client.profile import colors_toml, shell_toml
+from client.profile import APPEARANCE_HEADER, appearance_code, colors_toml, shell_toml
 from test_profile import profile
 from test_sync import LiveHub
 
@@ -205,10 +205,25 @@ class ProcessSyncTests(unittest.TestCase):
         self.wait_for(lambda: (b.state().get("observed") or {}).get("colors", {}).get("background") == "#654321", a, b)
         final = server.value["updateId"]
         b.stop()
+        # Shutdown extends the status envelope instead of breaking old consumers.
+        self.assertEqual(b.messages[-1]["status"], "Transport stopped")
+        self.assertTrue(b.messages[-1]["transport"]["closed"])
+        self.assertFalse(b.messages[-1]["transport"]["collectionReady"])
+        # Reproduce the previous adapter using retained authoritative application
+        # state, with no ownership record as on an actual pre-owner installation.
+        legacy = appearance_code(b.state()["observed"], legacy=True)
+        appearance = b.home / ".local/state/omarchy-urbit-theme/appearance.lua"
+        appearance.write_text(legacy)
+        owner = b.home / ".local/state/omarchy-urbit-theme-ownership"
+        for name in ("owner", "active"):
+            (owner / name).unlink()
         b.start()
         self.wait_for(lambda: b.messages[-1]["status"] == "Following shared appearance", a, b)
         time.sleep(1)
         self.assertEqual(server.value["updateId"], final)
+        self.assertTrue(appearance.read_text().startswith(APPEARANCE_HEADER))
+        self.assertEqual((appearance.parent / "appearance-before-owner-v3.lua").read_text(), legacy)
+        self.assertEqual((owner / "owner").read_text(), "Network Theme owner 1\nomarchy-urbit-theme\n")
         for machine in (a, b):
             self.assertNotIn("synthetic", json.dumps(machine.messages))
             self.assertNotIn("synthetic", json.dumps(machine.state()))

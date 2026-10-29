@@ -11,17 +11,22 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import stat
 import tempfile
 
 try:
+    from .appearance import Ownership, guard_includes, owner_lua
+    from .instance import INSTANCE
     from .support import Failure, command, dumps, fingerprint, hex_color, loads, talon_palette
 except ImportError:
+    from appearance import Ownership, guard_includes, owner_lua
+    from instance import INSTANCE
     from support import Failure, command, dumps, fingerprint, hex_color, loads, talon_palette
 
 DESK = "omarchy-urbit-theme"
 PROFILE_LIMIT = 262144
 MANAGED_THEME = "urbit-synced"
-APPEARANCE_HEADER = "-- Network Theme appearance adapter 2\n"
+APPEARANCE_HEADER = "-- Network Theme appearance adapter 3\n"
 # These are data files, not terminal launch configuration or executable Lua.
 THEME_FILES = ("btop.theme", "chromium.theme", "helix.toml", "icons.theme", "keyboard.rgb",
                "obsidian.css", "vscode-theme.json", "pi.json", "claude.json", "hermes.yaml", "t3code.json")
@@ -313,15 +318,40 @@ def window_lua(profile):
     return result
 
 
+def appearance_code(profile, instance=INSTANCE, *, legacy=False):
+    """Reproduce adapter2 exactly for evidence-bound migration, or emit adapter3."""
+    validate(profile)
+    body = ('local f=io.open(os.getenv("HOME").."/.local/state/omarchy/current/theme.name","r")\n'
+            'local n=f and f:read("*l"); if f then f:close() end\n'
+            'if n==' + lua(profile["theme"]) + ' then\n' + window_lua(profile) + 'end\n')
+    if legacy:
+        return "-- Network Theme appearance adapter 2\n" + body
+    guarded = owner_lua(instance.state_name) + body + 'end\n'
+    return APPEARANCE_HEADER + "-- content-sha256: " + hashlib.sha256(guarded.encode()).hexdigest() + "\n" + guarded
+
+
+def appearance_root(home=None, instance=INSTANCE):
+    # These files are included by this HOME's Hyprland configuration. Account
+    # journals separately honor XDG_STATE_HOME through StateStore.
+    return Path(home or Path.home()) / ".local/state" / instance.state_name
+
+
 class Desktop:
-    def __init__(self, home=None, runner=command):
+    def __init__(self, home=None, runner=command, instance=INSTANCE):
         self.home = Path(home or Path.home())
         self.current = self.home / ".local/state/omarchy/current"
         self.runner = runner
+        self.instance = instance
+        self.appearance = appearance_root(self.home, instance)
+        self.ownership = Ownership(self.home, instance)
+        self.managed_theme = MANAGED_THEME + ("" if instance.profile == "default" else "." + instance.profile)
 
     def needs_repair(self):
-        path = self.home / ".local/state/omarchy-urbit-theme/appearance.lua"
-        return path.is_file() and not path.read_text().startswith(APPEARANCE_HEADER)
+        path = self.appearance / "appearance.lua"
+        owner = self.ownership.read("owner")
+        return (owner not in (None, self.instance.state_name)
+                or path.is_file() and (owner != self.instance.state_name
+                    or not path.read_text().startswith(APPEARANCE_HEADER)))
 
     @staticmethod
     def command_label(args):
@@ -397,15 +427,111 @@ class Desktop:
                              theme=name, colors=colors, font=font, shell=shell, files=files,
                              windows=windows, animations=animations))
 
+    def interrupted_transition(self):
+        """Recognize a generated native working theme, never an arbitrary name.
+
+        The lifetime ownership lock proves a cooperating previous helper has
+        exited. Its intact managed-directory receipt identifies the partial set.
+        """
+        if self.ownership.fd is None:
+            return False
+        name = (self.current / "theme.name").read_text().strip()
+        if not re.fullmatch(r"urbit-synced(?:\.[a-z][a-z0-9-]{0,31})?", name):
+            return False
+        managed = self.home / ".config/omarchy/themes" / name
+        try:
+            info = managed.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+                return False
+            fd = os.open(managed / ".urbit-theme-managed", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+                    return False
+                raw = stream.read(PROFILE_LIMIT + 1)
+            return len(raw) <= PROFILE_LIMIT and loads(raw) == theme_receipt(managed)
+        except (OSError, Failure, ValueError):
+            return False
+
+    def adopt_legacy(self, profiles):
+        """Adopt only bytes reproduced from retained local application evidence.
+
+        The backup precedes replacement; interrupted retry never discards it.
+        This makes no desktop command or claim that appearance was applied.
+        """
+        path = self.appearance / "appearance.lua"
+        with self.session():
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            except FileNotFoundError:
+                return False
+            except OSError:
+                raise Failure("desktop", "The saved appearance could not be safely inspected; it was preserved.") from None
+            with os.fdopen(fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+                    raise Failure("desktop", "The saved appearance is not an owned ordinary file; it was preserved.")
+                raw = stream.read(PROFILE_LIMIT + 1)
+            if raw.startswith(APPEARANCE_HEADER.encode()):
+                return False  # Normal application separately validates its content receipt.
+            if len(raw) > PROFILE_LIMIT:
+                raise Failure("desktop", "The saved appearance exceeds the migration limit; it was preserved.")
+            matched = next((p for p in profiles if p is not None
+                            and appearance_code(p, self.instance, legacy=True).encode() == raw), None)
+            if matched is None:
+                raise Failure("desktop", "The old appearance does not match retained application evidence; it was preserved for review.")
+            backup = self.appearance / "appearance-before-owner-v3.lua"
+            if backup.exists() or backup.is_symlink():
+                if backup.is_symlink() or not backup.is_file() or backup.read_bytes() != raw:
+                    raise Failure("desktop", "The appearance migration backup differs; both files were preserved.")
+            else:
+                atomic(backup, raw.decode())
+            if path.is_symlink() or path.read_bytes() != raw:
+                raise Failure("desktop", "The old appearance changed during migration; it was preserved.")
+            atomic(path, appearance_code(matched, self.instance))
+            return True
+
+    def session(self):
+        return self.ownership.hold()
+
+    def local_theme_selected(self):
+        # A manual theme choice disables every saved override without deleting
+        # profile data. Only the helper holding this HOME's lock can reload.
+        with self.session():
+            self.ownership.write("owner", "-")
+            self.run(["hyprctl", "reload"])
+
     def apply(self, profile):
+        with self.session():
+            self._apply(profile)
+
+    def prepare_configuration(self):
+        config = (self.home / ".config/hypr/hyprland.lua").resolve()
+        if config.is_relative_to(Path("/usr/share/omarchy")):
+            raise Failure("desktop", "Hyprland's user configuration points at package-owned files.")
+        original = config.read_text()
+        guarded_config = guard_includes(original, self.instance.state_name)
+        appearance = self.appearance / "appearance.lua"
+        if appearance.exists() or appearance.is_symlink():
+            if appearance.is_symlink() or not appearance.is_file():
+                raise Failure("desktop", "The saved appearance is not an ordinary file; it was preserved.")
+            raw = appearance.read_text()
+            header, separator, body = raw[len(APPEARANCE_HEADER):].partition("\n")
+            if (not raw.startswith(APPEARANCE_HEADER) or not separator
+                    or header != "-- content-sha256: " + hashlib.sha256(body.encode()).hexdigest()):
+                raise Failure("desktop", "The saved appearance has no matching ownership receipt or was edited; preserve it before retrying.")
+        return config, original, guarded_config
+
+    def _apply(self, profile):
         validate(profile)
+        configuration = self.prepare_configuration()
         name = profile["theme"]
         stock = Path(os.environ.get("OMARCHY_PATH", "/usr/share/omarchy")) / "themes" / name
         user = self.home / ".config/omarchy/themes" / name
         if not stock.is_dir() and not user.is_dir():
             raise Failure("missing-theme", "Install the shared theme '" + name + "', then retry.")
         self.require_font(profile["font"])
-        managed = self.home / ".config/omarchy/themes" / MANAGED_THEME
+        managed = self.home / ".config/omarchy/themes" / self.managed_theme
         marker = managed / ".urbit-theme-managed"
         if managed.exists() and (managed.is_symlink() or not marker.is_file()):
             raise Failure("desktop", "The urbit-synced theme directory is not owned by this plugin.")
@@ -452,26 +578,28 @@ class Desktop:
                 if backup.exists():
                     backup.rename(managed)
                 raise
+        self.activate(profile, self.managed_theme, configuration)
+
+    def activate(self, profile, managed_theme, configuration, *, skip_background=False):
+        if self.ownership.fd is None:
+            raise Failure("busy", "Appearance activation requires the desktop ownership lock.")
+        config, original, guarded_config = configuration
+        name = profile["theme"]
+        # Guard all recognized old includes before any command can reload them.
+        if guarded_config != original:
+            if not (self.appearance / "hyprland-before-sync.lua").exists():
+                atomic(self.appearance / "hyprland-before-sync.lua", original)
+            atomic(config, guarded_config)
         env = dict(os.environ, OMARCHY_URBIT_THEME_REMOTE="1")
-        self.run(["omarchy", "theme", "set", MANAGED_THEME], timeout=90, env=env)
+        if skip_background:
+            env["OMARCHY_THEME_SKIP_BACKGROUND"] = "1"
+        self.run(["omarchy", "theme", "set", managed_theme], timeout=90, env=env)
         atomic(self.current / "theme.name", name + "\n")
         # A trailing guarded user include wins over handwritten looknfeel without
         # replacing it. Its guard stops it overriding a different local theme.
-        state = self.home / ".local/state/omarchy-urbit-theme"
-        code = window_lua(profile)
-        guarded = (APPEARANCE_HEADER + 'local f=io.open(os.getenv("HOME").."/.local/state/omarchy/current/theme.name","r")\n'
-                   'local n=f and f:read("*l"); if f then f:close() end\n'
-                   'if n==' + lua(name) + ' then\n' + code + 'end\n')
-        atomic(state / "appearance.lua", guarded)
-        config = (self.home / ".config/hypr/hyprland.lua").resolve()
-        if config.is_relative_to(Path("/usr/share/omarchy")):
-            raise Failure("desktop", "Hyprland's user configuration points at package-owned files.")
-        include = '\n-- omarchy-urbit-theme appearance\ndo\n  local p = os.getenv("HOME") .. "/.local/state/omarchy-urbit-theme/appearance.lua"\n  local f = io.open(p, "r")\n  if f then f:close(); dofile(p) end\nend\n'
-        original = config.read_text()
-        if include not in original:
-            if not (state / "hyprland-before-sync.lua").exists():
-                atomic(state / "hyprland-before-sync.lua", original)
-            atomic(config, original + include)
+        # Code and accidental-edit receipt share a single atomic replacement.
+        atomic(self.appearance / "appearance.lua", appearance_code(profile, self.instance))
+        self.ownership.write("owner", self.instance.state_name)
         self.run(["hyprctl", "reload"])
         errors = loads(self.run(["hyprctl", "-j", "configerrors"]))
         if any(errors):

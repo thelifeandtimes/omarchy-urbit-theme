@@ -1,6 +1,7 @@
 """Local palette, private state, and Secret Service support (stdlib only)."""
 
 import contextlib
+from datetime import datetime, timezone
 import fcntl
 import hashlib
 import ipaddress
@@ -15,6 +16,12 @@ import subprocess
 import tempfile
 import time
 from urllib.parse import urlsplit
+
+
+try:
+    from .instance import INSTANCE
+except ImportError:
+    from instance import INSTANCE
 
 
 PLUGIN_ID = "omarchy-urbit-theme"
@@ -63,7 +70,7 @@ def loads(value):
 
 
 def origin(value):
-    error = Failure("url", "Use an HTTPS origin, or HTTP with literal localhost or a loopback IP.")
+    error = Failure("url", "Use an HTTP or HTTPS origin without a path or credentials.")
     if not isinstance(value, str) or not 1 <= len(value) <= 2048:
         raise error
     if any(ord(c) <= 32 or ord(c) >= 127 for c in value) or any(c in value for c in "\\?#%"):
@@ -81,10 +88,11 @@ def origin(value):
             if len(host) > 253 or not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
                                           for label in host.split(".")):
                 raise error
-        loopback = address and (address.is_loopback or
-                               isinstance(address, ipaddress.IPv6Address) and
-                               address.ipv4_mapped and address.ipv4_mapped.is_loopback)
-        if url.scheme == "http" and host != "localhost" and not loopback:
+        if address:
+            unicast = address.ipv4_mapped if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped else address
+            if unicast.is_unspecified or unicast.is_multicast:
+                raise error
+        elif re.fullmatch(r"[0-9.]+", host):
             raise error
         host = address.compressed if address else host
         if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
@@ -333,9 +341,9 @@ def validate_record(record):
 
 
 class StateStore:
-    def __init__(self, root=None):
+    def __init__(self, root=None, instance=INSTANCE):
         base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
-        self.root = Path(root) if root is not None else base / PLUGIN_ID
+        self.root = Path(root) if root is not None else base / instance.state_name
         if not self.root.is_absolute():
             raise Failure("state", "The state directory must be absolute.")
 
@@ -402,15 +410,26 @@ class StateStore:
                     os.unlink(path)
 
 
+def check_session_expiry(session):
+    if "expires" in session:
+        try:
+            expiry = datetime.fromisoformat(session["expires"])
+            if expiry.tzinfo is None or datetime.now(timezone.utc) >= expiry:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise Failure("authentication", "The saved session expired. Disconnect and sign in again.") from None
+
+
 class Keyring:
-    def __init__(self, runner=command):
+    def __init__(self, runner=command, instance=INSTANCE):
         self.runner = runner
+        self.instance = instance
 
     def _call(self, action, url, data=b""):
         args = ["secret-tool", action]
         if action == "store":
-            args += ["--label=Omarchy Urbit Theme session"]
-        args += ["application", PLUGIN_ID, "origin", url]
+            args += ["--label=" + self.instance.label]
+        args += ["application", self.instance.state_name, "origin", url]
         try:
             result, output = self.runner(args, data=data, timeout=8, limit=16384)
         except Failure:
@@ -428,15 +447,17 @@ class Keyring:
         if verified != session:
             raise Failure("keyring", "The session could not be verified in Secret Service.", True)
 
-    def lookup(self, url, ship):
+    def lookup(self, url, ship, check_expiry=True):
         raw = self._call("lookup", url)
         session = loads(raw)
-        if (not isinstance(session, dict) or set(session) != {"url", "ship", "cookieName", "cookieValue"}
+        if (not isinstance(session, dict) or set(session) not in ({"url", "ship", "cookieName", "cookieValue"}, {"url", "ship", "cookieName", "cookieValue", "expires"})
                 or session["url"] != url or session["ship"] != ship
                 or session["cookieName"] != "urbauth-" + ship
                 or not isinstance(session["cookieValue"], str)
                 or not re.fullmatch(r"[A-Za-z0-9._~-]{1,4096}", session["cookieValue"])):
             raise Failure("authentication", "The saved session does not match this account. Disconnect and sign in again.")
+        if check_expiry:
+            check_session_expiry(session)
         return session
 
     def clear(self, url):

@@ -1,5 +1,7 @@
 # Network Theme
 
+Development note: [independent application sessions](APPLICATION_CONNECTIONS.md) are being qualified in isolated plugin instances; the normal standalone login remains available.
+
 One ship-owned appearance profile for your Omarchy computers, with an
 eleven-color Talon bridge. Change appearance on one connected computer and the
 others follow. Install on another computer, add the same ship, and it adopts
@@ -44,6 +46,7 @@ available to future consumers but do not alter unchanged Talon clients.
   `omarchy theme color`, and hooks. Developed against Omarchy 4.0.4.
 - Python 3.11+ (standard library only).
 - `secret-tool` and an available, unlocked Secret Service provider.
+- `busctl` for the experimental application-connection recovery metadata check.
 - Ship URL and `+code`. HTTPS origins are supported; HTTP is permitted only for
   literal localhost/loopback development origins. Eyre must be exposed at the
   origin root; redirects and subpath URLs are not followed.
@@ -286,3 +289,88 @@ do not replace later personal edits with the old backup wholesale.
 ## License
 
 MIT.
+
+### Experimental transport drain
+
+`Service.stopTransport()` requests the helper's internal `shutdown-transport`
+operation. It refuses while foreground commands are queued, pauses admission,
+stops the appearance/Talon workers and deletes each tracked subscription channel.
+Failed cleanup retains the exact binding for retry while the helper remains alive.
+The helper retains the normal status envelope and adds a `transport` receipt.
+Saved appearance intent and sessions remain. `collectionReady` is always false:
+this is an opt-in transport prerequisite, not permission to replace appearance
+ownership or a durable cleanup journal across arbitrary process death.
+
+### Experimental profile appearance ownership
+
+Theme helpers now coordinate one desktop owner per HOME, across default/dev/edge
+profiles and independently of their account XDG roots. A second helper refuses
+while the first holds the shared lock; switching requires its actual process exit.
+The selected profile and last applied appearance persist across a shell restart.
+Generated Lua checks the applied owner, so other profiles' saved overrides are
+inert even when their underlying theme names match. Returning to a profile can
+reapply its saved appearance without deleting another profile's files.
+
+Hooks queue intent only for the selected profile. A selection identifier survives
+same-profile restarts but changes when switching profiles, so delayed old hook
+output is ignored. Hooks no longer invoke the UI's separate publication path.
+The owning helper handles manual-theme override suppression and reload; font
+notifications remain available through a same-profile shell restart. The existing
+explicit themeChanged IPC remains a diagnostic interface, not a hook target.
+
+Byte-exact older generated includes are guarded without changing the referenced
+appearance file. Edited includes, unknown owner formats, and unreceipted or edited
+appearance files refuse application in place. New generated overrides contain an
+atomic content receipt. An older adapter2 override is adopted only when its bytes exactly match the
+retained observed or in-progress application profile; its original bytes are
+saved before replacement. Unrecognized or edited older files require explicit
+review and remain unchanged. Helpers from older releases do not honor the new lock and
+must be stopped before switching to these development profiles.
+
+This is cooperative coordination, not an OS sandbox or a complete collection
+transaction. Automatic rollback after a partial native theme/font operation,
+power-loss recovery and a real compositor remain separate qualification gates.
+`collectionReady` stays false. All current ownership evidence uses private homes,
+inert desktop commands, actual Lua, and test-only helper processes.
+
+The private rollback fixture now covers failed theme, window, shell-style and font
+commands followed by explicit prior-profile restoration. If a failed candidate
+leaves a temporary managed theme name, initial sync can recover using an existing
+authenticated hub after checking the generated theme's ownership receipt. Empty
+or unavailable hubs and edited/unknown directories remain unresolved. Pending
+application/publication intent survives failure, and readback must pass before
+success is reported. This is online recovery; offline snapshot restoration and an
+automatic collection rollback transaction are not yet supplied.
+
+Development collection recovery also has explicit
+[offline appearance checkpoints](PROFILE.md#experimental-offline-appearance-checkpoints).
+They preserve pending ship work and restore retained local theme data after the
+helper exits. They are not an automatic collection switch or full desktop rollback.
+
+
+Development transport recovery now retains each watch and settings-update channel
+under the plugin profile's `transport/` state. Independent operation leases permit
+concurrent watches and publishers; abandoned channels require exact saved-session
+cleanup before replacement. Unknown settings updates remain unresolved after
+channel deletion and prevent another write to the same entry. Fresh authenticated
+readback can confirm the desired state, distinctly from a Gall acknowledgement.
+No cookie or settings body is stored in this journal. Unknown state is preserved
+and refused; history caps at2048 channels/4MiB and8192 owner records.
+
+Private qualification passes268 Python tests and actual concurrent Theme client
+kills/lost-delete recovery with a real private keyring and synthetic HTTP peer.
+The original watch remains active, the uncertain write never replays, and fresh
+readback confirms it. Existing collection regression also passes. Fresh-Urbit Theme
+recovery, hosted/native deployment, safe disconnect of live clients, credential
+expiry, journal archival and adoption/downgrade remain gates before rollout.
+
+
+The development transport journal now uses format2. Disconnect pauses the account
+and reserves its credential for cleanup until active requests stop and channel
+deletions are confirmed. If that fails, retry Disconnect on the retained account;
+new work with its retired session is blocked. Handoff cancellation follows the
+same barrier. Format1 migration preserves existing channel evidence and refuses
+while older owners remain active; the original format1 reader refuses format2.
+Private qualification now passes284 Python tests, actual CLI crash/retry with a
+private keyring and synthetic peer, and the existing collection regression.
+Actual Urbit/hosted/native rollout and supported archival/adoption remain gates.

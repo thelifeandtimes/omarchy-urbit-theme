@@ -1,8 +1,18 @@
 #!/bin/bash
-# Omarchy runs hooks synchronously. Queue work in the shell, never on the ship here.
+# Omarchy runs hooks synchronously. Queue selected-profile intent only.
 [[ ${OMARCHY_URBIT_THEME_REMOTE:-} == 1 ]] && exit 0
-helper="$HOME/.config/omarchy/plugins/thelifeandtimes.urbit-theme/client/sync.py"
+# A copied profile hook keeps its own filename and helper.
+hook_name=${BASH_SOURCE[0]##*/}
+suffix=${hook_name#omarchy-urbit-theme}
+[[ $suffix == "$hook_name" ]] && exit 0
+if [[ -n $suffix ]]; then
+  profile=${suffix#.}
+  [[ $suffix == ".$profile" && $profile =~ ^[a-z][a-z0-9-]{0,31}$ && $profile != default ]] || exit 0
+fi
+helper="$HOME/.config/omarchy/plugins/thelifeandtimes.urbit-theme$suffix/client/sync.py"
 if [[ -f $helper ]]; then
   timeout 5 python3 -B "$helper" notify theme >/dev/null 2>&1 || true
 fi
-timeout 3 omarchy-shell urbit-theme themeChanged >/dev/null 2>&1 || true
+# The owning coordinator observes this file and publishes through its own bridge.
+# Do not dispatch a second UI publication path: an inactive or delayed hook must
+# never publish the currently visible palette to another profile's ships.

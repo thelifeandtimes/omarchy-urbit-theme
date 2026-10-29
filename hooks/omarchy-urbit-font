@@ -1,5 +1,13 @@
 #!/bin/bash
 # Survives the shell restart performed by `omarchy font set`.
 [[ ${OMARCHY_URBIT_THEME_REMOTE:-} == 1 ]] && exit 0
-helper="$HOME/.config/omarchy/plugins/thelifeandtimes.urbit-theme/client/sync.py"
+# A copied profile hook keeps its own filename, helper and IPC address.
+hook_name=${BASH_SOURCE[0]##*/}
+suffix=${hook_name#omarchy-urbit-font}
+[[ $suffix == "$hook_name" ]] && exit 0
+if [[ -n $suffix ]]; then
+  profile=${suffix#.}
+  [[ $suffix == ".$profile" && $profile =~ ^[a-z][a-z0-9-]{0,31}$ && $profile != default ]] || exit 0
+fi
+helper="$HOME/.config/omarchy/plugins/thelifeandtimes.urbit-theme$suffix/client/sync.py"
 [[ -f $helper ]] && timeout 2 python3 -B "$helper" notify font "$1" >/dev/null 2>&1 || true

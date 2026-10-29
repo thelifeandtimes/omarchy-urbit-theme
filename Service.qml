@@ -6,8 +6,12 @@ Item {
   id: root
   property var shell: null
   property var manifest: null
+  readonly property string moduleName: manifest && Model.validModuleId(manifest.id) ? manifest.id : ""
+  readonly property string ipcTarget: Model.serviceIpcTarget(moduleName)
   property var settings: ({})
   property bool desktopEnabled: true
+  property bool transportStopping: false
+  property var transportState: ({ closed: false })
   property var desktopState: ({ status: "Starting desktop sync", error: "", hub: null, paused: false, theme: "", bridgeErrors: {} })
   property string desktopBuffer: ""
   property var account: Model.emptyState()
@@ -25,7 +29,7 @@ Item {
   property int processGeneration: 0
   property var rowErrors: ({})
   readonly property bool busy: queue.running !== "" || queue.controls.length > 0
-  readonly property bool canLogin: loaded && account.ships.length < 64
+  readonly property bool canLogin: !transportStopping && loaded && account.ships.length < 64
     && queue.running === "" && queue.controls.length === 0 && !helper.running && !(desktopEnabled && desktopState.bridgeBusy)
   readonly property string statusText: !loaded ? "Loading ships" : busy ? "Working: " + queue.running
     : account.ships.length + " ships"
@@ -45,11 +49,13 @@ Item {
   }
 
   function refresh() {
+    if (transportStopping) return
     queue = Model.request(queue, "refresh", account)
     pump()
   }
 
   function themeChanged() {
+    if (transportStopping) return
     desktopCommand({ action: "changed" })
     queue = Model.request(queue, "theme", account)
     retry.stop()
@@ -57,6 +63,7 @@ Item {
   }
 
   function control(action, row) {
+    if (transportStopping) return
     if (["enable", "pause", "disconnect"].indexOf(action) < 0 || !loaded || !row) return
     if (action === "enable" && row.authenticationRequired) return
     queue = Model.request(queue, action, account, row)
@@ -76,6 +83,7 @@ Item {
   }
 
   function pump() {
+    if (transportStopping) return
     if (queue.running || helper.running) return
     if (desktopEnabled) {
       // The profile coordinator owns publication. Never send a joining
@@ -160,6 +168,19 @@ Item {
     Qt.callLater(pump)
   }
 
+  function stopTransport() {
+    if (helper.running || queue.running || queue.controls.length || queue.jobs.length) return "busy"
+    transportStopping = true
+    desktopEnabled = false
+    retry.stop(); debounce.stop()
+    if (!desktop.running) {
+      transportState = { closed: false, reason: "helper-not-running", collectionReady: false }
+      return "unavailable"
+    }
+    desktop.write(JSON.stringify({ action: "shutdown-transport" }) + "\n")
+    return "requested"
+  }
+
   function desktopCommand(value) {
     if (desktopEnabled && desktop.running) desktop.write(JSON.stringify(value) + "\n")
   }
@@ -178,7 +199,9 @@ Item {
   Component.onDestruction: pendingInput = ""
 
   IpcHandler {
-    target: "urbit-theme"
+    objectName: "themeInstanceIpc"
+    enabled: root.ipcTarget !== ""
+    target: root.ipcTarget
     function themeChanged(): string { root.themeChanged(); return "queued" }
     function desktopStatus(): string { return JSON.stringify(root.desktopState) }
   }
@@ -208,6 +231,10 @@ Item {
           root.desktopBuffer = root.desktopBuffer.substring(end + 1)
           try {
             var value = JSON.parse(line)
+            if (value.transport && typeof value.transport.closed === "boolean") {
+              root.transportState = value.transport
+              continue
+            }
             if (!Model.text(value.status, 256) || !Model.text(value.error, 512)
                 || typeof value.paused !== "boolean" || !Model.text(value.theme, 256)
                 || (value.hub !== null && (!Model.text(value.hub.id, 64) || !Model.text(value.hub.ship, 256)))) continue

@@ -40,3 +40,41 @@ These tests do not verify real Wayland popup placement, compositor focus
 acquisition, installation, actual theme-file parsing (the helper is inert), or
 ship authentication. The older SDK smoke's theme calls are in-process; only
 the final hook test verifies real IPC delivery.
+
+## Networkless profile qualification
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B tests/qml/run_profiles.py \
+  --output /tmp/omabit-theme-profile-qml-check01
+```
+
+Use a fresh output directory. Bubblewrap is required; there is no host fallback.
+The first phase runs the existing UI suite and profile routing tests with native
+controls and inert I/O. The second starts a real Quickshell process and calls the
+installed `omarchy-shell` wrapper through its private IPC socket. Only copied
+Service/Model files and the inert fixture helper enter that shell; the plugin's
+Python backend is never copied. The namespace excludes the host home, network,
+D-Bus and compositor sockets. Source/fixture/native control hashes and all output
+are retained. Both phases must pass, and QML warnings fail the first phase.
+
+The tests cover late identity injection, separate stable/dev/edge panel and
+service targets, distinct service state, targeted IPC delivery and removal of an
+instance address. They do not install hooks, enable a real plugin, apply a desktop
+appearance or qualify native Wayland positioning and complete profile switching.
+
+The profile IPC phase also invokes the real copied theme/font hooks for all three
+instances. Their notification helpers are inert binding recorders; theme events
+reach only the matching real service target, font arguments stay with their own
+helper, and remote-application suppression prevents another notification.
+
+File ownership and the real metadata-selected notification command have a separate
+networkless check with synthetic appearance files and inert desktop commands:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -B tests/run_instance_desktop.py \
+  --output /tmp/omabit-theme-profile-hooks-check-check01
+```
+
+It covers coexistence, restart, conflicting ownership, partial setup, misplaced
+receipts, invalid hook names and preserving another instance's appearance/backup.
+The shared visible desktop and native collection activation remain separate gates.
