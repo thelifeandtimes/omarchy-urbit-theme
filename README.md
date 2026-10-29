@@ -374,3 +374,7 @@ while older owners remain active; the original format1 reader refuses format2.
 Private qualification now passes284 Python tests, actual CLI crash/retry with a
 private keyring and synthetic peer, and the existing collection regression.
 Actual Urbit/hosted/native rollout and supported archival/adoption remain gates.
+
+The Python appearance-owner fixtures execute generated Lua in a temporary HOME.
+Install Lua5.4 (`/usr/bin/lua`) as well as Python3 and Node before running the
+full test suite; CI installs that test dependency explicitly.
