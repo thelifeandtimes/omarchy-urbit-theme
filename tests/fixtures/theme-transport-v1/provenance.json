@@ -1,0 +1,15 @@
+{
+  "memory": "M276",
+  "original_writer": "/tmp/omabit-theme-before-disconnect-20261024-01/transport_journal.py",
+  "original_snapshot": "/tmp/omabit-theme-transport-runtime-20261024-01/writer-fixtures/06-closed.json",
+  "sha256": {
+    "writer.py": "aacae075a5bb4cb52dd325291bbf4c172502a6d3a6c1b9598943f41268d8fca2",
+    "channels.json": "2cf7c94508d8210a3cb9f6d44a2008307ea695f77ba9126ca11fb16f76a98bb3",
+    "owners/a09c50194d0e433699b9af3c847f89d6": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "owners/53856ef3ba7a43238f57e925248eb8a1": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "owners/1eb167d872a04deebeb795cb0a0cab73": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "owners/129ef6dea70240a1b7248e1b8f10d7e6": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "owners/adb5fb44d6d24d7fadfbdc9343af88e6": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "owners/02bb01d14f784afcb66db2893fbc0ffc": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

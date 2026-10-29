@@ -39,7 +39,7 @@ class MemoryKeyring:
             raise Failure("keyring", "Secret Service is unavailable.", True)
         self.sessions[url] = copy.deepcopy(session)
 
-    def lookup(self, url, ship):
+    def lookup(self, url, ship, check_expiry=True):
         self.calls.append("lookup")
         if self.fail:
             raise Failure("keyring", "Secret Service is unavailable.", True)
@@ -250,14 +250,16 @@ class PolicyTests(unittest.TestCase):
     def test_allowed_origins(self):
         for value, expected in (("https://SHIP.example:443/", "https://ship.example"),
                                 ("http://localhost:8080/", "http://localhost:8080"),
+                                ("http://192.168.1.20:8080", "http://192.168.1.20:8080"),
+                                ("http://ship.tailnet:8080", "http://ship.tailnet:8080"),
                                 ("http://127.12.3.4", "http://127.12.3.4"),
                                 ("http://[::ffff:127.0.0.1]", "http://[::ffff:127.0.0.1]"),
                                 ("http://[::1]:1234", "http://[::1]:1234")):
             self.assertEqual(origin(value), expected)
 
     def test_unsafe_urls(self):
-        values = (None, "ship.example", "//ship.example", "ftp://ship.example", "http://ship.example",
-                  "http://localhost.evil", "http://127.1", "http://2130706433", "http://[::ffff:10.0.0.1]",
+        values = (None, "ship.example", "//ship.example", "ftp://ship.example",
+                  "http://127.1", "http://2130706433",
                   "http://0.0.0.0", "https://user:pass@ship.example", "https://ship.example/path",
                   "https://ship.example?", "https://ship.example#", "https://ship.example\\evil",
                   " https://ship.example", "https://ship.example\n", "https://ship.example:99999",
@@ -405,7 +407,8 @@ class EyreTests(unittest.TestCase):
         self.server.client().poke("themes", {"themes": [PALETTE]})
         messages = self.server.messages
         self.assertEqual([m["action"] for m in messages], ["poke", "ack", "ack", "delete"])
-        self.assertEqual([m["id"] for m in messages], [1, 2, 3, 4])
+        self.assertEqual([m["id"] for m in messages if m["action"] != "delete"], [1, 2, 3])
+        self.assertEqual(messages[-1], {"action": "delete"})
         self.assertEqual([m["event-id"] for m in messages if m["action"] == "ack"], [9, 10])
         self.assertEqual(messages[0]["ship"], "zod")
         for request in self.server.requests:
@@ -909,6 +912,56 @@ class StateAndHelperTests(unittest.TestCase):
         self.assertTrue(self.run_action("sync")["ok"])
         self.assertEqual(entries(self.server.body)["themes"]["activeId"], PLUGIN_ID)
 
+    def test_passive_restart_confirms_unknown_matching_write_without_republication(self):
+        from client.transport_journal import TransportJournal
+        self.login();self.run_action("set-auto", enabled=True)
+        self.assertTrue(self.run_action("sync")["ok"])
+        self.server.mode = "timeout"
+        failed = self.run_action("sync", force=True)
+        self.assertFalse(failed["ok"]);self.assertTrue(failed["state"]["ships"][0]["pending"])
+        journal = TransportJournal(self.store.root)
+        previous = journal.status()["channels"]
+        unknown = previous[-1];self.assertEqual(unknown["outcome"], "uncertain")
+        before = len(self.server.messages)
+        self.server.mode = "success"
+        self.helper = Helper(self.store, self.keyring, lambda: self.palette, self.server.transport)
+        response = self.run_action("sync")
+        self.assertTrue(response["ok"]);self.assertFalse(response["state"]["ships"][0]["pending"])
+        self.assertEqual(len(self.server.messages), before)
+        rows = journal.status()["channels"]
+        self.assertEqual(len(rows), len(previous));self.assertEqual(rows[-1]["id"], unknown["id"])
+        self.assertEqual(rows[-1]["outcome"], "state-confirmed")
+        # Deliberate subsequent Publish Now remains a new notification intent.
+        self.assertTrue(self.run_action("sync", force=True)["ok"])
+        writes = [m for m in self.server.messages[before:] if m["action"] == "poke"]
+        self.assertEqual([m["json"]["put-entry"]["entry-key"] for m in writes], ["themes", "accent"])
+
+    def test_passive_retry_preserves_unknown_nonmatching_write_without_overwrite(self):
+        from client.transport_journal import TransportJournal
+        self.login();self.run_action("set-auto", enabled=True)
+        self.assertTrue(self.run_action("sync")["ok"])
+        self.server.mode = "timeout"
+        self.assertFalse(self.run_action("sync", force=True)["ok"])
+        journal = TransportJournal(self.store.root);old = journal.status()["channels"][-1]
+        remote = entries(self.server.body)["themes"];remote["activeId"] = None
+        self.server.body["desk"]["ui-prefs"]["themes"] = dumps(remote)
+        self.palette["primary"] = "#123456";before = len(self.server.messages)
+        self.server.mode = "success"
+        self.helper = Helper(self.store, self.keyring, lambda: self.palette, self.server.transport)
+        response = self.run_action("sync")
+        self.assertFalse(response["ok"]);self.assertTrue(response["state"]["ships"][0]["pending"])
+        self.assertEqual(len(self.server.messages), before)
+        self.assertEqual(journal.status()["channels"][-1], old)
+        self.assertEqual(entries(self.server.body)["themes"], remote)
+
+    def test_reenabled_passive_matching_state_needs_no_new_notification(self):
+        self.login();self.run_action("set-auto", enabled=True)
+        self.assertTrue(self.run_action("sync")["ok"])
+        self.run_action("set-auto", enabled=False);self.run_action("set-auto", enabled=True)
+        before = len(self.server.messages)
+        self.assertTrue(self.run_action("sync")["ok"])
+        self.assertEqual(len(self.server.messages), before)
+
     def test_partial_failure_pending_retry_and_pause(self):
         self.login()
         self.run_action("set-auto", enabled=True)
@@ -924,7 +977,7 @@ class StateAndHelperTests(unittest.TestCase):
         self.assertTrue(self.run_action("sync")["ok"])
         retried = [m["json"]["put-entry"]["entry-key"] for m in self.server.messages[before:]
                    if m["action"] == "poke"]
-        self.assertEqual(retried, ["themes", "accent"])
+        self.assertEqual(retried, ["accent"])
         self.assertFalse(self.run_action("status")["state"]["ships"][0]["pending"])
         self.server.mode = "timeout-no-write"
         self.palette["primary"] = "#123456"
@@ -1016,8 +1069,8 @@ class StateAndHelperTests(unittest.TestCase):
         with patch.object(self.store, "save", side_effect=fail_disconnection):
             response = self.run_action("disconnect")
         self.assertFalse(response["ok"])
-        self.assertTrue(response["state"]["ships"][0]["automatic"])
-        self.assertTrue(response["state"]["ships"][0]["pending"])
+        self.assertFalse(response["state"]["ships"][0]["automatic"])
+        self.assertFalse(response["state"]["ships"][0]["pending"])
         self.assertEqual(response["state"]["ships"][0]["url"], self.server.url)
         self.assertIn(self.server.url, self.keyring.sessions)
         with self.store.locked():

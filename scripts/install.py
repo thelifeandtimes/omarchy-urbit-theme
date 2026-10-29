@@ -19,7 +19,14 @@ OLD_FILES = (
 )
 PROFILE_FILES = OLD_FILES + ("PROFILE.md", "client/profile.py", "client/sync.py")
 NATIVE_FILES = PROFILE_FILES + ("client/native.py",)
-FILES = NATIVE_FILES + ("ThemeIcon.qml",)
+ICON_FILES = NATIVE_FILES + ("ThemeIcon.qml",)
+CONNECTION_FILES = ICON_FILES + ("client/instance.py", "client/connection_offer.py", "client/application_connection.py", "APPLICATION_CONNECTIONS.md")
+RECOVERY_FILES = CONNECTION_FILES + ("client/connection_journal.py",)
+DECLARATION_FILES = RECOVERY_FILES + ("application-connection.json",)
+OWNERSHIP_FILES = DECLARATION_FILES + ("client/appearance.py",)
+CHECKPOINT_FILES = OWNERSHIP_FILES + ("client/checkpoints.py",)
+TRANSPORT_FILES = CHECKPOINT_FILES + ("client/transport_journal.py",)
+FILES = TRANSPORT_FILES + ("PluginHeader.qml", "ConnectionChoices.qml")
 HOOK = "omarchy-urbit-theme"
 FONT_HOOK = "omarchy-urbit-font"
 SOURCE = Path(__file__).resolve().parents[1]
@@ -56,7 +63,7 @@ def inspect(target, hook):
     receipt = json.loads(regular(target / MARKER))
     if (receipt.get("id") != ID or receipt.get("version") != 1
             or not isinstance(receipt.get("files"), dict)
-            or set(receipt["files"]) not in (set(FILES), set(NATIVE_FILES), set(PROFILE_FILES), set(OLD_FILES))):
+            or set(receipt["files"]) not in (set(FILES), set(TRANSPORT_FILES), set(CHECKPOINT_FILES), set(OWNERSHIP_FILES), set(DECLARATION_FILES), set(RECOVERY_FILES), set(CONNECTION_FILES), set(ICON_FILES), set(NATIVE_FILES), set(PROFILE_FILES), set(OLD_FILES))):
         raise RuntimeError("The existing installation has no recognized ownership receipt.")
     found = set()
     for path in target.rglob("*"):

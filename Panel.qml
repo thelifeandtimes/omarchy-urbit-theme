@@ -1,14 +1,17 @@
 import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
+import QtQuick.Window
+import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 import "Model.js" as Model
 
 Ui.Panel {
   id: root
-  moduleName: "thelifeandtimes.urbit-theme"
-  ipcTarget: "thelifeandtimes.urbit-theme"
+  ipcTarget: Model.validModuleId(moduleName) ? moduleName : ""
+  readonly property string instanceLabel: Model.instanceLabel(moduleName)
   property var service: bar && bar.shell && typeof bar.shell.serviceFor === "function"
     ? bar.shell.serviceFor(moduleName) : null
   readonly property var account: service ? service.account : Model.emptyState()
@@ -16,12 +19,28 @@ Ui.Panel {
   readonly property var desktop: service && service.desktopState ? service.desktopState
     : ({ status: "", error: "", hub: null, paused: false, theme: "" })
   readonly property bool ready: !!service && service.loaded
-  readonly property color foreground: Color.foreground
+  readonly property color foreground: signInOpened ? Commons.Color.menu.text : Commons.Color.popups.text
   readonly property color dim: Qt.darker(foreground, 1.4)
   readonly property bool hasError: !!(desktop.error || (service && service.lastError))
   readonly property int controlSize: Style.space(28)
   readonly property var previewColors: ["primary", "secondary", "tertiary", "background", "surface", "text", "raised", "error", "selection", "link"]
   property bool adding: false
+  property bool signInOpened: false
+  property int previousAccounts: 0
+  onAccountChanged: {
+    var count=account.ships.length
+    if(previousAccounts>0 && count===0) {root.cancelLogin();root.signInOpened=true;root.formError="Connection removed. Sign in to connect again."}
+    previousAccounts=count
+  }
+  readonly property string omabitTarget: "thelifeandtimes.omabit" + moduleName.slice("thelifeandtimes.urbit-theme".length) + ".monitor"
+  Process {
+    id: connectOmabit
+    command: ["omarchy-shell",root.omabitTarget,"applications",root.moduleName]
+    stdout: SplitParser { splitMarker:"";onRead:function(data){} }
+    stderr: SplitParser { splitMarker:"";onRead:function(data){} }
+    onExited:function(code,status){omabitTimeout.stop();if(code!==0||status!==0)root.formError="Omabit is unavailable. Use direct credentials to connect this plugin on its own.";else root.cancelLogin()}
+  }
+  Timer {id:omabitTimeout;interval:5000;onTriggered:if(connectOmabit.running)connectOmabit.signal(15)}
   property string formError: ""
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -54,6 +73,7 @@ Ui.Panel {
   function cancelLogin() {
     clearSecret()
     adding = false
+    signInOpened = false
     urlField.text = ""
     formError = ""
   }
@@ -95,10 +115,10 @@ Ui.Panel {
     anchors.fill: parent
     bar: root.bar
     active: root.opened || root.hasError
-    tooltipText: "Network Theme: " + (root.currentPalette ? root.currentPalette.name : "Loading")
+    tooltipText: root.instanceLabel + ": " + (root.currentPalette ? root.currentPalette.name : "Loading")
     iconComponent: Component {
       ThemeIcon {
-        ink: root.hasError ? Color.urgent : button.foreground
+        ink: root.hasError ? Commons.Color.urgent : button.foreground
         palette: root.currentPalette
       }
     }
@@ -109,6 +129,7 @@ Ui.Panel {
     }
   }
   Ui.KeyboardPanel {
+    objectName: "pluginPopup"
     owner: root
     anchorItem: button
     bar: root.bar
@@ -133,35 +154,39 @@ Ui.Panel {
           id: content
           objectName: "panelContent"
           width: flick.width
-          spacing: Style.space(8)
-          Ui.PanelHero {
+          spacing: Style.space(12)
+          PluginHeader {
             objectName: "paletteSection"
-            title: "Network Theme"
-            meta: root.currentPalette ? root.currentPalette.name.replace(/-/g, " ") : "Ship-backed desktop appearance"
-            detail: root.currentPalette ? (root.currentPalette.dark ? "DARK" : "LIGHT") : ""
+            title: root.instanceLabel
+            meta: !root.account.ships.length ? "Not signed in" : (root.currentPalette ? root.currentPalette.name.replace(/-/g, " ") : "Ship-backed desktop appearance")
+            detail: root.account.ships.length && root.currentPalette ? (root.currentPalette.dark ? "DARK" : "LIGHT") : ""
             iconComponent: Component {
               ThemeIcon {
-                size: Style.space(36)
-                ink: root.hasError ? Color.urgent : root.foreground
+                size: Style.font.display
+                ink: root.hasError ? Commons.Color.urgent : root.foreground
                 palette: root.currentPalette
               }
             }
             trailingControl: Component {
-              IconAction {
+              Ui.PanelActionButton {
                 objectName: "refresh"
-                glyph: "refresh"
-                bordered: false
+                iconText: "↻"
+                size: Style.spacing.controlHeight
+                foreground: root.foreground
+                focusable: true
+                bordered: true
                 enabled: !!root.service
                 tooltipText: "Refresh palette and ship status"
                 onClicked: if (root.service) root.service.refresh()
               }
             }
           }
+          Ui.PanelSeparator { width: parent.width; foreground: root.foreground }
           RowLayout {
             objectName: "paletteStrip"
             width: parent.width
             spacing: Style.space(4)
-            visible: !!root.currentPalette
+            visible: root.account.ships.length > 0 && !!root.currentPalette
             Repeater {
               model: root.previewColors
               Rectangle {
@@ -181,9 +206,9 @@ Ui.Panel {
               }
             }
           }
-          Ui.PanelSeparator { width: parent.width }
           RowLayout {
             objectName: "shipsHeader"
+            visible: root.account.ships.length > 0
             width: parent.width
             Ui.PanelSectionHeader { objectName: "shipsSection"; Layout.fillWidth: true; text: "SHIPS" }
             Action {
@@ -194,7 +219,7 @@ Ui.Panel {
               verticalPadding: Style.space(3)
               visible: !root.adding
               enabled: root.ready && root.account.ships.length < 64
-              onClicked: { root.adding = true; urlField.forceActiveFocus() }
+              onClicked: { root.close(); root.cancelLogin(); root.signInOpened = true }
             }
           }
           Body { visible: root.ready && !root.account.ships.length; text: "Add a ship to share your desktop appearance."; color: root.dim }
@@ -292,7 +317,7 @@ Ui.Panel {
                   text: root.shipDetail(shipRow.modelData)
                   textFormat: Text.PlainText
                   wrapMode: Text.WordWrap
-                  color: root.isHub(shipRow.modelData) && root.desktop.error ? Color.urgent : root.dim
+                  color: root.isHub(shipRow.modelData) && root.desktop.error ? Commons.Color.urgent : root.dim
                   font.family: Style.font.family
                   font.pixelSize: Style.font.caption
                 }
@@ -309,9 +334,59 @@ Ui.Panel {
           }
           Body {
             visible: text !== ""
-            color: Color.urgent
+            color: Commons.Color.urgent
             text: root.formError || (root.service ? root.service.lastError : "")
               || (!root.account.ships.some(root.isHub) ? root.desktop.error : "")
+          }
+          Action { objectName: "open-sign-in"; text: root.account.ships.length ? "Add a ship" : "Sign In"; onClicked: {root.close();root.cancelLogin();root.signInOpened=true} }
+
+        }
+      }
+    }
+  }
+  Window {
+    id: signInWindow
+    objectName: "signInWindow"
+    visible: root.signInOpened
+    title: root.instanceLabel + " — Sign In"
+    width: Style.space(440)
+    height: Math.min(signInContent.implicitHeight+Style.spacing.panelPadding*2,Screen.height-Style.space(48))
+    flags: Qt.Dialog | Qt.WindowStaysOnTopHint
+    color: Commons.Color.menu.background
+    onClosing: root.cancelLogin()
+    onVisibleChanged: if(visible) requestActivate()
+    Ui.BorderSurface {
+      anchors.fill: parent
+      focus: true
+      color: Commons.Color.menu.background; radius: Style.cornerRadius
+      borderSpec: Border.surfaceSpec("menu","border",Commons.Color.menu.border,Math.max(1,Style.space(2)))
+      Keys.onEscapePressed: root.cancelLogin()
+      MouseArea {anchors.fill:parent;onClicked:{}}
+      Flickable {
+        anchors.fill:parent;anchors.margins:Style.spacing.panelPadding
+        contentWidth:width;contentHeight:signInContent.implicitHeight;clip:true
+        Column {
+          id:signInContent;objectName:"signInContent";width:parent.width;spacing:Style.space(12)
+          RowLayout {
+            width:parent.width
+            PluginHeader {
+              Layout.fillWidth: true; Layout.minimumWidth: 0
+              title: "Sign In"; meta: root.instanceLabel; foreground: root.foreground
+              iconComponent: Component { ThemeIcon { size: Style.font.display; ink: root.foreground; palette: root.currentPalette } }
+              trailingControl: Component {
+                Ui.PanelActionButton { iconText: "×"; foreground: root.foreground; focusable: true; tooltipText: "Close"; onClicked: root.cancelLogin() }
+              }
+            }
+          }
+          Body { width:parent.width; visible:text!=="";text:root.formError || (root.service ? root.service.lastError : "");color:Commons.Color.urgent }
+          Ui.PanelSeparator { width: parent.width; foreground: root.foreground }
+          ConnectionChoices {
+            width: parent.width
+            busy: connectOmabit.running
+            foreground: root.foreground
+            omabitAvailable: Model.validModuleId(root.moduleName)
+            onConnectOmabit: { root.clearSecret(); connectOmabit.running = true; omabitTimeout.restart() }
+            onDirectCredentials: { root.adding = !root.adding; root.clearSecret() }
           }
           Column {
             width: parent.width
@@ -324,7 +399,7 @@ Ui.Panel {
               id: urlField
               objectName: "shipUrl"
               width: parent.width
-              placeholderText: "https://ship.example"
+              placeholderText: "https://your-ship.example"
               maximumLength: 2048
               inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText
               Accessible.name: "Ship URL"
@@ -357,7 +432,7 @@ Ui.Panel {
               spacing: Style.space(8)
               Action {
                 objectName: "signIn"
-                text: "Add & Sync"
+                text: "Sign In"
                 enabled: !!root.service && root.service.canLogin
                 onClicked: root.submitLogin()
               }
@@ -372,11 +447,11 @@ Ui.Panel {
     id: tip
     // Match Omarchy's Ui.Button tooltip surface, including gradient/per-side
     // borders, instead of inheriting the platform's default yellow tooltip.
-    readonly property var borderStyle: Border.surfaceSpec("tooltip", "border", Color.tooltip.border, Math.max(1, Style.normalBorderWidth))
+    readonly property var borderStyle: Border.surfaceSpec("tooltip", "border", Commons.Color.tooltip.border, Math.max(1, Style.normalBorderWidth))
     padding: 0
     width: Math.min(implicitWidth, Style.space(300), Math.max(1, content.width))
     background: Ui.BorderSurface {
-      color: Color.tooltip.background
+      color: Commons.Color.tooltip.background
       borderSpec: tip.borderStyle
       radius: 0
     }
@@ -384,7 +459,7 @@ Ui.Panel {
       text: tip.text
       textFormat: Text.PlainText
       wrapMode: Text.Wrap
-      color: Color.tooltip.text
+      color: Commons.Color.tooltip.text
       font.family: Style.font.family
       font.pixelSize: Style.font.bodySmall
       leftPadding: Border.left(tip.borderStyle) + Style.spacing.controlPaddingX

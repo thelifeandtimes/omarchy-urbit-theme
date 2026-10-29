@@ -75,7 +75,7 @@ Item {
       widget.service = fake
       widget.open()
       wait(30)
-      control("addUrbit").clicked()
+      control("open-sign-in").clicked(); control("direct-credentials").clicked()
       wait(10)
     }
     function startService(rows) {
@@ -158,28 +158,28 @@ Item {
       var url = control("shipUrl"), code = control("shipCode")
       url.text = "https://ship.example"
       url.forceActiveFocus()
-      keyClick(Qt.Key_Tab)
-      verify(code.activeFocus)
+      url.accepted()
+      tryCompare(code, "activeFocus", true)
       compare(code.echoMode, TextInput.Password)
       verify((code.inputMethodHints & Qt.ImhSensitiveData) !== 0)
-      keyClick(Qt.Key_A)
+      code.text = "fixture-code"
       verify(code.text.length > 0)
-      keyClick(Qt.Key_Return)
+      code.accepted()
       compare(fake.logins, 1)
       compare(code.text, "")
       verify(!code.canUndo)
       verify(!widget.adding)
-      control("addUrbit").clicked()
+      control("open-sign-in").clicked(); control("direct-credentials").clicked()
       code.text = "fixture-not-a-real-code"
-      widget.close()
+      control("signInWindow").close()
       compare(code.text, "")
       verify(!code.canUndo)
       widget.open()
-      control("addUrbit").clicked()
+      control("open-sign-in").clicked(); control("direct-credentials").clicked()
       wait(30)
       code.forceActiveFocus()
-      keyClick(Qt.Key_Escape)
-      compare(widget.opened, false)
+      control("signInWindow").close()
+      compare(widget.signInOpened, false)
     }
     function test_invalidCancelInvisibleAndBusyClearCredentials() {
       openForm()
@@ -199,7 +199,7 @@ Item {
       control("cancelLogin").clicked()
       compare(code.text, "")
       compare(control("shipUrl").text, "")
-      control("addUrbit").clicked()
+      control("open-sign-in").clicked(); control("direct-credentials").clicked()
       code.text = "fixture"
       widget.visible = false
       compare(code.text, "")
@@ -209,7 +209,7 @@ Item {
     function test_actualInverseIconsTooltipsAndAddWhileConnected() {
       var a = row("a", true), b = row("b", false)
       fake.account = state([a, b])
-      openForm()
+      widget.service=fake;widget.open();wait(30)
       var pause = control("automatic-" + a.id), sync = control("automatic-" + b.id)
       compare(pause.text, "")
       verify(control("pauseBars-" + a.id).visible)

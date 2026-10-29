@@ -168,3 +168,84 @@ selects the hub; switching it off pauses desktop sync on this computer. A replac
 login for the same ship/origin adopts the hub afresh rather than replaying an
 old connection's pending action. Pausing the hub row also stops desktop sync.
 Desktop pause retains the current appearance; resume adopts the hub.
+
+## Development ownership contract
+
+The experimental profile implementation uses a shared HOME-local ownership lock
+and versioned active/applied records in
+`~/.local/state/omarchy-urbit-theme-ownership/`. The active record includes a random
+selection ID retained through same-profile restarts; hook notifications bind to
+that selection. Only the owning coordinator changes appearance. Generated includes
+check the applied record and an ordinary theme-name guard; exact old include blocks
+can acquire the outer owner guard without rewriting their files. The adapter3
+content hash and code are replaced as one atomic file. Unknown/unreceipted files
+are preserved and application refuses instead of silently adopting edited code.
+
+This supersedes the earlier automatic legacy-override repair and hook-side
+removal behavior for this development checkout. Explicit legacy migration and a
+complete collection rollback transaction are not yet qualified. The owner record
+is coordination metadata, never ship credentials or an inter-plugin security
+boundary. Hooks no longer dispatch a second UI publication request.
+
+The next migration checkpoint narrows the unreceipted-file refusal above: adapter2
+bytes reconstructed exactly from desktop.json's observed or applying profile can
+be adopted automatically. The original is retained as appearance-before-owner-v3.lua
+before atomic replacement. A mismatched backup, linked/special file, edited bytes,
+unknown header or missing matching application evidence refuses in place. Migration
+itself runs no desktop command and does not claim applied ownership; normal startup
+still reconciles and verifies appearance. Interrupted backup/replacement can retry
+without replacing the retained original. Arbitrary legacy code is never evaluated
+to decide whether it is owned.
+
+## Experimental offline appearance checkpoints
+
+The development helper exposes explicit local checkpoints for collection recovery:
+
+```sh
+python3 -B client/sync.py checkpoint-appearance
+python3 -B client/sync.py restore-appearance CHECKPOINT_ID RESTORE_REQUEST_ID
+```
+
+Run these from the exact retained plugin instance after its helper has drained and
+exited. The HOME ownership lock refuses a concurrent cooperating Theme helper.
+`CHECKPOINT_ID` is the returned SHA-256 (64 lowercase hexadecimal characters).
+Choose a fresh 32-character lowercase hexadecimal request ID for an intentional
+restoration; retry that same pair after an interruption. A completed request only
+checks current readback, without reapplying. Another intentional restoration needs
+a new request. These are development recovery primitives; they do not select or
+activate a plugin collection, and their results keep `collectionReady: false`.
+
+A checkpoint requires this instance to own a verified applied appearance, with no
+pending local application. Uncertain ship publication may remain and is preserved.
+The private version1 snapshot lives in the instance's HOME appearance directory,
+`~/.local/state/<instance-state-name>/checkpoints/<sha256>.json`, separately from
+XDG ship/account and sync journals. It binds the exact instance, effective profile,
+frozen local theme files and a hash of personal Hyprland configuration after exact
+generated includes are removed. Snapshot/restore never reads a ship credential or
+contacts Eyre. Stock themes and the mutable generated source are not consulted
+while restoring. Locally trusted ancillary theme files are retained as bytes;
+remote profiles still cannot supply executable theme code.
+
+Snapshot bounds are 64 regular owned files, 1 MiB per file, 4 MiB combined data and
+8 MiB serialized JSON. Unknown versions, changed hashes, symlinks, special files,
+changed personal configuration or edited retained restore assets refuse intact.
+Native theme-set locking covers observation and frozen files, avoiding a mixed
+snapshot during a theme switch. A running native switch yields a retryable refusal.
+
+Each restore request has a private version1 receipt under `restore-receipts/`.
+An `applying` receipt is synced before native/configuration effects; `verified` is
+synced only after effective profile, current theme files and owner readback pass.
+An interrupted attempt remains applying and blocks this profile's ordinary sync
+startup until its exact retry succeeds. A new request cannot displace an incomplete
+one. The bounded history retains up to 128 requests; it never prunes evidence to
+make room. Existing `desktop.json`, including pending/attempted publication and
+applying intent, is not rewritten by either command. Resuming normal sync remains
+an independent action that must reconcile that retained intent.
+
+Wallpaper is explicitly outside version1: the checkpoint records
+`backgroundPolicy: preserve-current`, excludes background directories/links and
+restores with `OMARCHY_THEME_SKIP_BACKGROUND=1`. This is not full desktop rollback.
+Native compositor behavior, font/shell restart, app-retint subprocesses, arbitrary
+older helpers and cross-profile transition fencing require separate qualification.
+A completed local receipt does not authorize starting another collection or
+restoring an older plugin that does not understand this recovery contract.

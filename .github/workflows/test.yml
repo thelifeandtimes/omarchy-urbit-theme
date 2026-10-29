@@ -13,8 +13,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Lua appearance fixture runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lua5.4
       - name: Backend and installation fixtures
-        run: python3 -B -W error::ResourceWarning -m unittest discover -s tests -p 'test_*.py'
+        run: python3 -B .github/run-fixtures.py
       - name: Panel protocol and queue tests
         run: node --test tests/model.test.js
       - name: Hook syntax

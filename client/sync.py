@@ -17,11 +17,17 @@ import threading
 import time
 
 try:
+    from .checkpoints import Checkpoints
+    from .appearance import Ownership
+    from .instance import INSTANCE
     from .eyre import Eyre
     from .native import ensure_hooks
     from .profile import DESK, Desktop, application_mismatches, atomic, content, digest, palette, read_remote, validate, verify_application
     from .support import Failure, Keyring, StateStore, command, dumps, loads
 except ImportError:
+    from checkpoints import Checkpoints
+    from appearance import Ownership
+    from instance import INSTANCE
     from eyre import Eyre
     from native import ensure_hooks
     from profile import DESK, Desktop, application_mismatches, atomic, content, digest, palette, read_remote, validate, verify_application
@@ -87,6 +93,26 @@ class Coordinator:
         self.state.update(pending=merged, attempted=False, baseId=None)
         self.save()
 
+    def recover_local(self):
+        # First adoption of an existing hub already prefers its authoritative
+        # profile. A verified interrupted native set must not require a successful
+        # local capture before that adoption can run. Never seed an empty hub with
+        # fabricated data or discard an existing uncertain publication.
+        if not self.first or not self.desktop.interrupted_transition():
+            raise Failure("desktop", "The local transition is not eligible for automatic recovery.")
+        current = self.remote.read()
+        if current is None:
+            raise Failure("desktop", "An interrupted theme requires an existing shared profile or an explicit local theme selection.")
+        validate(current)
+        self.state["applying"] = current
+        self.save()
+        self.desktop.apply(current)
+        local = self.desktop.capture(self.state["deviceId"])
+        verify_application(current, local)
+        self.state.update(observed=current, baseline=digest(local), applying=None)
+        self.save()
+        return local
+
     def reconcile(self, local, intentional=False):
         s = self.state
         if intentional:
@@ -147,6 +173,7 @@ class Watch:
         self.changed = threading.Event()
         self.ready = threading.Event()
         self.error = None
+        self.eyre = Eyre(url, session, timeout=25)
         self.thread = threading.Thread(target=self.run, args=(url, session), daemon=True)
         self.thread.start()
 
@@ -155,7 +182,7 @@ class Watch:
         while not self.stop.is_set():
             try:
                 self.error = None
-                Eyre(url, session, timeout=25).watch(DESK, self.stop, self.changed, self.ready)
+                self.eyre.watch(DESK, self.stop, self.changed, self.ready)
                 delay = 1
             except Exception as e:
                 self.error = e if isinstance(e, Failure) else Failure("network", "The appearance connection must reconnect.", True)
@@ -229,18 +256,15 @@ class Bridge:
                 self.busy = False
 
 
-def notify(root=None, theme=False, font=None):
+def notify(root=None, theme=False, font=None, *, home=None, instance=INSTANCE, runner=command):
     if os.environ.get("OMARCHY_URBIT_THEME_REMOTE") == "1":
         return
-    root = Path(root or StateStore().root)
-    if theme:
-        # A deliberate theme selection restores its own decoration before capture.
-        # Font-only changes retain the current shared decoration.
-        include = Path.home() / ".local/state/omarchy-urbit-theme/appearance.lua"
-        if include.exists():
-            include.unlink()
-            command(["hyprctl", "reload"], timeout=4)
-    value = {"id": secrets.token_hex(16)}
+    selection = Ownership(home, instance).notification_selection()
+    if selection is None:
+        return
+    root = Path(root or StateStore(instance=instance).root)
+    # Hooks only queue intent; desktop mutation belongs to the owning helper.
+    value = {"id": secrets.token_hex(16), "theme": bool(theme), "selection": selection}
     if font is not None and isinstance(font, str) and len(font) <= 128:
         value["font"] = font
     atomic(root / "appearance-notify.json", dumps(value))
@@ -251,26 +275,46 @@ def notification(root):
     return loads(path.read_bytes()) if path.exists() else {"id": ""}
 
 
+def stop_workers(bridge, watches, timeout=65):
+    """Transport receipt only; durable appearance/application work is not cleared."""
+    deadline = time.monotonic() + timeout
+    bridge.stop.set()
+    bridge.changed.set()
+    for watch in watches:
+        watch.stop.set()
+    workers = [bridge.thread] + [watch.thread for watch in watches]
+    for worker in workers:
+        worker.join(timeout=max(0, deadline-time.monotonic()))
+    if any(worker.is_alive() for worker in workers):
+        return {"closed": False, "reason": "workers-still-running", "collectionReady": False}
+    cleaned = [watch.eyre.close_watches(deadline) for watch in watches]
+    return {"closed": all(cleaned), "reason": "" if all(cleaned) else "channel-cleanup-unknown",
+            "workersStopped": True, "collectionReady": False}
+
+
 def serve():
     accounts, disk, desktop = StateStore(), Disk(), Desktop()
     with accounts.locked():
         pass
     fd = os.open(disk.root / "desktop.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "a") as lock:
+    with os.fdopen(fd, "a") as lock, desktop.session():
         StateStore._private(lock.fileno())
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Failure("busy", "Desktop sync is already running.") from None
+        Checkpoints(desktop).assert_no_pending()
         ensure_hooks(state_root=disk.root)
         state = disk.load()
+        desktop.adopt_legacy([state["observed"], state["applying"]])
         disk.save(state)
         inbox = queue.Queue()
         stopped = threading.Event()
+        input_closed = threading.Event()
 
         def input_loop():
             try:
-                while not stopped.is_set():
+                while True:
                     line = sys.stdin.buffer.readline(8193)
                     if not line:
                         break
@@ -278,11 +322,13 @@ def serve():
                         continue
                     inbox.put(loads(line))
             finally:
+                input_closed.set()
                 stopped.set()
 
         threading.Thread(target=input_loop, daemon=True).start()
         bridge = Bridge(accounts)
         watch = engine = None
+        retired_watches = []
         active = None
         last_output = None
         candidate = None
@@ -300,6 +346,9 @@ def serve():
                         if not isinstance(request, dict):
                             continue
                         action = request.get("action")
+                        if action == "shutdown-transport":
+                            stopped.set()
+                            break
                         if action == "pause":
                             state.update(paused=True, pending=None, attempted=False)
                         elif action == "resume":
@@ -320,6 +369,8 @@ def serve():
                         elif action == "changed":
                             next_capture = 0
                         disk.save(state)
+                    if stopped.is_set():
+                        break
                     if state["hub"] is None and rows:
                         state["hub"] = {k: rows[0][k] for k in ("id", "url", "ship")}
                         disk.save(state)
@@ -338,6 +389,8 @@ def serve():
                             disk.save(state)
                         if watch:
                             watch.stop.set()
+                            retired_watches.append(watch)
+                        retired_watches = [w for w in retired_watches if w.thread.is_alive() or w.eyre.pending_watch_channels]
                         watch = engine = None
                         bridge.target = None
                         active = None
@@ -352,18 +405,26 @@ def serve():
                     now = time.monotonic()
                     intentional = False
                     if engine and now >= next_capture:
+                        notice = notification(disk.root)
+                        current_notice = desktop.ownership.notification_current(notice)
+                        if current_notice and notice["id"] != state["notification"] and notice.get("theme"):
+                            desktop.local_theme_selected()
                         try:
                             local = desktop.capture(state["deviceId"])
                         except Failure:
-                            if not state["applying"]:
+                            if state["applying"]:
+                                # A shell restart can interrupt our own native set.
+                                local = state["applying"]
+                            elif engine.first and desktop.interrupted_transition():
+                                # A failed candidate can leave its temporary name
+                                # after its helper exits. Recover from this profile's
+                                # authenticated hub, never from partial local values.
+                                local = engine.recover_local()
+                            else:
                                 raise
-                            # A shell restart can interrupt the temporary working
-                            # theme before its display name has been restored.
-                            local = state["applying"]
                         stamp = digest(local)
-                        notice = notification(disk.root)
                         changed = bool(state["baseline"] and stamp != state["baseline"] and not state["applying"])
-                        new_notice = notice["id"] != state["notification"]
+                        new_notice = current_notice and notice["id"] != state["notification"]
                         intentional = changed and (new_notice or (candidate == stamp and not engine.first))
                         requested = local
                         if new_notice and "font" in notice and state["baseline"]:
@@ -393,7 +454,7 @@ def serve():
                         error = watch.error.message
                     status = ("Paused" if state["paused"] else "Add a ship to start desktop sync" if not state["hub"]
                               else "Hub paused or disconnected" if not active else "Reconnecting" if not watch.ready.is_set()
-                              else "Syncing" if state["pending"] or state["applying"] else "Following shared appearance")
+                              else "Needs attention" if error else "Syncing" if state["pending"] or state["applying"] else "Following shared appearance")
                 except Exception as exception:
                     error = exception.message if isinstance(exception, Failure) else "Desktop sync could not complete the operation; retrying."
                     status = "Needs attention"
@@ -408,9 +469,29 @@ def serve():
                     last_output = raw
                 stopped.wait(0.25)
         finally:
-            bridge.stop.set()
-            if watch:
-                watch.stop.set()
+            watches = retired_watches + ([watch] if watch else [])
+            while True:
+                receipt = stop_workers(bridge, watches)
+                receipt["pendingAppearance"] = bool(state["pending"] or state["applying"] or state["attempted"])
+                # Keep the established status envelope for existing helper consumers.
+                # A stopped helper must not retain its previous "Following" status.
+                output = dict(status="Transport stopped" if receipt["closed"] else "Stopping transport",
+                              error="" if receipt["closed"] else "Transport cleanup is incomplete; retry shutdown.",
+                              hub=state["hub"], paused=state["paused"],
+                              theme=(state["observed"] or {}).get("theme", ""),
+                              bridgeErrors=dict(bridge.errors), bridgeBusy=bridge.busy,
+                              transport=receipt)
+                print(dumps(output), flush=True)
+                if receipt["closed"] or input_closed.is_set():
+                    break
+                # Retain exact failed channel bindings and remain paused for retry.
+                while not input_closed.is_set():
+                    try:
+                        request = inbox.get(timeout=.25)
+                    except queue.Empty:
+                        continue
+                    if isinstance(request, dict) and request.get("action") == "shutdown-transport":
+                        break
 
 
 def main():
@@ -419,10 +500,16 @@ def main():
             notify(theme=sys.argv[1:] == ["notify", "theme"])
         elif len(sys.argv) == 4 and sys.argv[1:3] == ["notify", "font"]:
             notify(font=sys.argv[3])
+        elif sys.argv[1:] == ["checkpoint-appearance"]:
+            result = Checkpoints(Desktop()).capture(Disk().load())
+            print(dumps({"appearanceCheckpoint": result, "collectionReady": False}), flush=True)
+        elif len(sys.argv) == 4 and sys.argv[1] == "restore-appearance":
+            result = Checkpoints(Desktop()).restore(sys.argv[2], sys.argv[3])
+            print(dumps({"appearanceRestoration": result, "collectionReady": False}), flush=True)
         elif sys.argv[1:] == ["serve"]:
             serve()
         else:
-            raise Failure("input", "Specify notify or serve.")
+            raise Failure("input", "Specify notify, serve, checkpoint-appearance, or restore-appearance CHECKPOINT REQUEST.")
         return 0
     except Exception as exception:
         error = exception.message if isinstance(exception, Failure) else "Desktop sync could not start."

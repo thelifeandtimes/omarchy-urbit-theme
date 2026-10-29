@@ -18,6 +18,7 @@ ShellRoot {
     id: serviceLoader
     active: true
     sourceComponent: Plugin.Service {
+      manifest: ({id: "thelifeandtimes.urbit-theme"})
       desktopEnabled: false
       onQueueChanged: {
         if (queue.generation !== root.themeRequests) {

@@ -26,7 +26,7 @@ function errorText(code) {
     authentication: "Session expired or sign-in rejected. Remove this ship, then add it again.",
     network: "The ship could not be reached. Check its connection.",
     keyring: "Secret Service is unavailable or locked. No plaintext fallback is used.",
-    url: "Use HTTPS, or HTTP on loopback, without credentials, query, or fragment.",
+    url: "Use HTTP or HTTPS without credentials, query, or fragment.",
     input: "Check the ship URL and +code.",
     "duplicate-origin": "This ship URL is already added.",
     "ship-limit": "The maximum of 64 ships has been reached.",
@@ -238,4 +238,20 @@ function complete(queue, response, state, now) {
     q.jobs.push(retry);
   }
   return q;
+}
+
+// The host injects instance identity after loading. Do not register canonical
+// IPC while a separately named instance is waiting for that injection.
+function validModuleId(id) {
+  return typeof id === "string" && /^thelifeandtimes\.urbit-theme(?:\.[a-z][a-z0-9-]{0,31})?$/.test(id);
+}
+function instanceLabel(id) {
+  var prefix = "thelifeandtimes.urbit-theme.";
+  return "Network Theme" + (validModuleId(id) && id.indexOf(prefix) === 0
+    ? " (" + id.slice(prefix.length) + ")" : "");
+}
+function serviceIpcTarget(id) {
+  if (!validModuleId(id)) return "";
+  var prefix = "thelifeandtimes.urbit-theme";
+  return "urbit-theme" + id.slice(prefix.length);
 }
